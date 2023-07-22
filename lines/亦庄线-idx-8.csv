@@ -1,0 +1,15 @@
+Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
+SJZ,0,30,180,1,4
+XC,1,30,120,,
+XHM,2,30,240,,
+JG,3,30,120,,
+YZQ,4,30,120,,
+YZWHY,5,30,180,,
+WYJ,6,30,120,,
+RJDJ,7,30,120,,
+RCDJ,8,30,240,,
+TJNL,9,30,180,,
+JHL,10,30,120,,
+CQN,11,30,180,,
+CQ,12,30,180,,
+YZHCZ,13,30,,,10

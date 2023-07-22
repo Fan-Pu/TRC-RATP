@@ -1,0 +1,13 @@
+Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
+YH,0,30,180,,5
+DM,1,30,180,,
+WFT,2,30,180,,
+HJWY,3,30,120,,
+DGD,4,30,180,,
+HY,5,30,180,,
+DHMN,6,30,240,,
+HHT,7,30,120,,
+MXY,8,30,120,,
+YDMW,9,30,240,,
+TIQ,10,30,120,,
+ZSK,11,30,,,

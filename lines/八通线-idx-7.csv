@@ -1,0 +1,16 @@
+Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
+SH,0,30,180,1,1
+SHD,1,30,120,1,
+GBD,2,30,180,,
+CMDX,3,30,180,,
+SQ,4,30,180,,
+GZ,5,30,180,,
+BLQ,6,30,180,,
+TZBY,7,30,120,,
+GY,8,30,120,,
+JKS,9,30,180,,
+LY,10,30,120,,
+LHL,11,30,120,,
+TQ,12,30,180,,9
+HZ,13,30,180,,
+HQDJQ,14,30,,,

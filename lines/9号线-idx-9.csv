@@ -1,0 +1,14 @@
+Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
+GGZ,0,30,120,,11
+FTKJY,1,30,120,,
+KYL,2,30,120,,
+FTNL,3,30,180,,
+FTDDJ,4,30,120,,
+QLZ,5,30,180,,
+LLQ,6,30,180,1,
+LLQD,7,30,240,,
+BJXZ,8,30,180,,
+JSBWG,9,30,180,1,
+BDZ,10,30,120,,
+BSQN,11,30,120,,
+GJTSG,12,30,,1,

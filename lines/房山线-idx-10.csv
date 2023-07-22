@@ -1,0 +1,17 @@
+Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
+DGTN,0,30,120,,
+SJM,1,30,180,1,
+HXDQ,2,30,120,,
+BPY,3,30,180,,
+GGZ,4,30,180,1,11
+DBT,5,30,240,,
+DT,6,30,240,,
+CY,7,30,180,,
+LBF,8,30,120,,
+GYC,9,30,180,,
+LXDXCB,10,30,180,,
+LXDXC,11,30,120,,
+LXDXCX,12,30,180,,
+LXNG,13,30,120,,
+SZ,14,30,180,,
+YCD,15,30,,,12
