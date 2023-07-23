@@ -1,10 +1,13 @@
 import os
 import csv
+import statistics
 from RailLine import *
 from PassengerFlow import *
 
+INTERVAL = 1800
 START_TIME = 5 * 3600
 PEAK_HOURS = [(7 * 3600, 9 * 3600), (17 * 3600, 19 * 3600)]
+FLOW_FACTOR = 2
 
 
 def read_lines(folder_path):
@@ -36,7 +39,7 @@ def read_lines(folder_path):
                 station_name, station_id, dwell_time, runtime, is_transfer_station, conn_depot_id = row
 
                 rail_line.dwells[station_id] = int(dwell_time)
-                if not station_name in rail_line.up_stations:
+                if not int(station_id) in rail_line.up_stations:
                     rail_line.up_stations.append(int(station_id))
 
                     if conn_depot_id != '':
@@ -61,6 +64,11 @@ def read_lines(folder_path):
         for (i, j), runtime in line.runtimes.items():
             runtimes[(2 * station_cnt - 1 - j, 2 * station_cnt - 1 - i)] = runtime
         line.runtimes.update(runtimes)
+        # update stations_conn_depots
+        stations_conn_depots = {}
+        for sta_id, depot_id in line.stations_conn_depots.items():
+            stations_conn_depots[2 * len(line.up_stations) - 1 - sta_id] = depot_id
+        line.stations_conn_depots.update(stations_conn_depots)
 
     # generate feasible routes (short turning routes needs to be determined by passenger flow)
     for key, line in lines.items():
@@ -96,6 +104,62 @@ def read_passenger_flows(folder_path, type_name, lines):
 
 
 def set_line_short_routes(lines, passenger_flows):
-    for key, line in lines.items():
-        flow_data = passenger_flows[line.line_id]
-        
+    for line_id, line in lines.items():
+        # check if has middle stations that connect with depots
+        mid_station_conn_depots = [i for i in line.stations_conn_depots
+                                   if i not in [line.up_stations[0], line.up_stations[-1],
+                                                line.dn_stations[0], line.dn_stations[-1]]]
+        if len(mid_station_conn_depots) == 0:
+            continue
+        flow_data = passenger_flows.sectional_flows[line.line_id]
+        is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
+
+        for window in PEAK_HOURS:
+            if is_flow_unbalance: break
+
+            start_time_id, end_time_id = [int((t - START_TIME) / INTERVAL) for t in window]
+            # up direction and down direction flows
+            for key, rows in flow_data.items():
+                # for each row (in flow_data) during peak hours
+                if key == '0':  # up direction
+                    mid_station_id = min(mid_station_conn_depots)
+                    routes = [[i for i in range(line.up_stations[0], mid_station_id + 1)],
+                              [i for i in range(mid_station_id, line.up_stations[-1] + 1)]]
+                    avg_passenger_flows = [[], []]  # flows for two routes over several hours of peak hours
+                    for t in range(start_time_id, end_time_id):
+                        row = rows[t]
+                        for k in range(0, len(routes)):
+                            route = routes[k]
+                            # average flow over the route
+                            avg_passenger_flow = sum([int(row[(i, i + 1)]) for i in route[:-1]]) / (len(route) - 1)
+                            avg_passenger_flows[k].append(avg_passenger_flow)
+                    # average flow over peak hours and routes
+                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
+                                           statistics.mean(avg_passenger_flows[-1])]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
+                        is_flow_unbalance = True
+                        break  # breaks 'for key, rows in flow_data.items()'
+
+                else:  # down direction
+                    mid_station_id = max(mid_station_conn_depots)
+                    routes = [[i for i in range(line.dn_stations[0], mid_station_id + 1)],
+                              [i for i in range(mid_station_id, line.dn_stations[-1] + 1)]]
+                    avg_passenger_flows = [[], []]  # flows for two routes over several hours of peak hours
+                    for t in range(start_time_id, end_time_id):
+                        row = rows[t]
+                        for k in range(0, len(routes)):
+                            route = routes[k]
+                            # average flow over the route
+                            avg_passenger_flow = sum(
+                                [int(row[(i - len(line.dn_stations), i + 1 - len(line.dn_stations))]) for i in
+                                 route[:-1]]) / (len(route) - 1)
+                            avg_passenger_flows[k].append(avg_passenger_flow)
+                    # average flow over peak hours and routes
+                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
+                                           statistics.mean(avg_passenger_flows[-1])]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
+                        is_flow_unbalance = True
+                        break  # breaks 'for key, rows in flow_data.items()'
+
+        if is_flow_unbalance:
+            sdas=0
