@@ -105,7 +105,7 @@ def read_passenger_flows(folder_path, type_name, lines):
 
 def set_line_short_routes(lines, passenger_flows):
     for line_id, line in lines.items():
-        # check if has middle stations that connect with depots
+        # check if it has middle stations that connect with depots
         mid_station_conn_depots = [i for i in line.stations_conn_depots
                                    if i not in [line.up_stations[0], line.up_stations[-1],
                                                 line.dn_stations[0], line.dn_stations[-1]]]
@@ -113,6 +113,7 @@ def set_line_short_routes(lines, passenger_flows):
             continue
         flow_data = passenger_flows.sectional_flows[line.line_id]
         is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
+        new_short_routes = []  # short routes need to be added if is_flow_unbalance is True
 
         for window in PEAK_HOURS:
             if is_flow_unbalance: break
@@ -138,6 +139,11 @@ def set_line_short_routes(lines, passenger_flows):
                                            statistics.mean(avg_passenger_flows[-1])]
                     if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
                         is_flow_unbalance = True
+                        # generate short routes
+                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
+                        short_route = routes[short_route_id]
+                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
+                        new_short_routes += [short_route, short_route_reverse]
                         break  # breaks 'for key, rows in flow_data.items()'
 
                 else:  # down direction
@@ -151,15 +157,20 @@ def set_line_short_routes(lines, passenger_flows):
                             route = routes[k]
                             # average flow over the route
                             avg_passenger_flow = sum(
-                                [int(row[(i - len(line.dn_stations), i + 1 - len(line.dn_stations))]) for i in
-                                 route[:-1]]) / (len(route) - 1)
+                                [int(row[(i, i + 1)]) for i in route[:-1]]) / (len(route) - 1)
                             avg_passenger_flows[k].append(avg_passenger_flow)
                     # average flow over peak hours and routes
                     avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
                                            statistics.mean(avg_passenger_flows[-1])]
                     if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
                         is_flow_unbalance = True
+                        # generate short routes
+                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
+                        short_route = routes[short_route_id]
+                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
+                        new_short_routes += [short_route, short_route_reverse]
                         break  # breaks 'for key, rows in flow_data.items()'
 
         if is_flow_unbalance:
-            sdas=0
+            # generate short routes
+            line.routes += new_short_routes
