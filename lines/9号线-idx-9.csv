@@ -1,5 +1,5 @@
 Station,Index,Dwell_time,Runtime,Is_transfer_station,Connected_depot
-GGZ,0,30,120,,11
+GGZ,0,30,120,1,11
 FTKJY,1,30,120,,
 KYL,2,30,120,,
 FTNL,3,30,180,,

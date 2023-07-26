@@ -14,3 +14,4 @@ class RailLine:
         self.headway_max = row[3]
         self.turnback_min = row[4]
         self.turnback_max = row[5]
+        self.platform_names = {}
