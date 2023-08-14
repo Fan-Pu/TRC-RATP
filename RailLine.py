@@ -15,3 +15,13 @@ class RailLine:
         self.turnback_min = row[4]
         self.turnback_max = row[5]
         self.platform_names = {}
+        self.transfer_pairs = []  # indicate transfer connections, key (l1,s1,l2,s2)
+
+    def get_runtime(self, start_station, end_station):
+        # from arrive time of start_station to arrive time of end_station
+        runtime = 0
+        if end_station <= start_station:
+            raise ValueError("end_station must be greater than start_station")
+        for i in range(start_station, end_station):
+            runtime += self.dwells[i] + self.runtimes[i, i + 1]
+        return runtime
