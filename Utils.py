@@ -1,6 +1,7 @@
 import math
 import os
 import csv
+import time
 import statistics
 from RailLine import *
 from PassengerFlow import *
@@ -20,6 +21,7 @@ HEADWAY_MIN = 120  # seconds
 HEADWAY_MAX = 320
 HEADWAY_POOL = [i for i in range(HEADWAY_MIN, HEADWAY_MAX, 100)]
 TRAIN_CAPACITY = 1200  # loading capacity
+TRANSFER_SECS = 120  # fixed transfer time
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -377,7 +379,11 @@ def gen_timetables(iter_max, lines, passenger_flows):
 
         timetable_pool.append(timetable_net)
 
+        start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"程序执行时间: {execution_time:.4f} 秒")
 
         export_timetable(root_folder, timetable_net, lines)
 
@@ -436,7 +442,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
     # !!! t (seconds) is starting from START_TIME
     alight_volume = {}  # key (l,s,t)
-    transfer_volume = {}  # key (l1,s1,l2,s2,t)
+    transfer_volume = {}  # key (l2,s2,arrive_t)
 
     # set core_slots, arrive_slots and depart_slots
     for l, timetable in timetable_net.items():
@@ -488,8 +494,9 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                     timetable.p_transfer[service_id][s1, l2, s2] = alight_pas * transfer_rate
                     # ignore 0
                     temp_value = math.floor(alight_pas * transfer_rate)
+                    arrive_t = int(t) + TRANSFER_SECS
                     if temp_value > 0:
-                        transfer_volume[l1, s1, l2, s2, t] = temp_value
+                        transfer_volume[l2, s2, arrive_t] = temp_value
 
             # calculate the waiting passengers
             for l, service_id in arrive_slots[t]:
@@ -505,8 +512,8 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 transfer_pas = 0
                 keys_to_remove = []
                 for key, value in transfer_volume.items():
-                    _, _, l2, s2, t_slot = key
-                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= t:
+                    l2, s2, t_slot = key
+                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= int(t):
                         keys_to_remove.append(key)
                         transfer_pas += value
                 # remove keys
@@ -532,8 +539,8 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 transfer_pas = 0
                 keys_to_remove = []
                 for key, value in transfer_volume.items():
-                    _, _, l2, s2, t_slot = key
-                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= t:
+                    l2, s2, t_slot = key
+                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= int(t):
                         keys_to_remove.append(key)
                         transfer_pas += value
                 # remove keys
