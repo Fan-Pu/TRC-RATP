@@ -442,7 +442,8 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
     # !!! t (seconds) is starting from START_TIME
     alight_volume = {}  # key (l,s,t)
-    transfer_volume = {}  # key (l2,s2,arrive_t)
+    transfer_volume = {}  # key (l2,s2)
+    transfer_volume_points = {}  # key (l2,s2)
 
     # set core_slots, arrive_slots and depart_slots
     for l, timetable in timetable_net.items():
@@ -496,7 +497,11 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                     temp_value = math.floor(alight_pas * transfer_rate)
                     arrive_t = int(t) + TRANSFER_SECS
                     if temp_value > 0:
-                        transfer_volume[l2, s2, arrive_t] = temp_value
+                        if (l2, s2) not in transfer_volume.keys():
+                            transfer_volume[l2, s2] = []
+                            transfer_volume_points[l2, s2] = 0
+                        transfer_volume[l2, s2].append((arrive_t, temp_value))
+                        # transfer_volume[l2, s2, arrive_t] = temp_value
 
             # calculate the waiting passengers
             for l, service_id in arrive_slots[t]:
@@ -506,19 +511,23 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 # remaining passengers + new arriving passengers + transfer passengers
                 pre_time_second, remaining_pas = timetable.p_wait[station_id][-1]
                 pre_time_minute = round((pre_time_second - START_TIME * 60) / 60)
-                arriving_pas = sum([passenger_flows.d[int(l), station_id, t_slot]
-                                    for t_slot in range(pre_time_minute, t_minute)])
+                arriving_pas = math.ceil(sum([passenger_flows.d[int(l), station_id, t_slot]
+                                              for t_slot in range(pre_time_minute, t_minute)]))
                 # calculate transfer volume
                 transfer_pas = 0
-                keys_to_remove = []
-                for key, value in transfer_volume.items():
-                    l2, s2, t_slot = key
-                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= int(t):
-                        keys_to_remove.append(key)
+                while True:
+                    temp_key = (int(l), station_id)
+                    if temp_key not in transfer_volume or not transfer_volume[temp_key]:
+                        break
+                    i = transfer_volume_points[temp_key]
+                    if i > len(transfer_volume[temp_key]) - 1:
+                        break
+                    t_slot, value = transfer_volume[temp_key][i]
+                    if t_slot > t:
+                        break
+                    elif pre_time_second < t_slot <= t:
                         transfer_pas += value
-                # remove keys
-                for key in keys_to_remove:
-                    del transfer_volume[key]
+                        transfer_volume_points[temp_key] = i + 1
 
                 wait_passengers = remaining_pas + arriving_pas + transfer_pas
                 timetable.p_wait[station_id].append((t, wait_passengers))
@@ -537,15 +546,20 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                                     for t_slot in range(pre_time_minute, t_minute)])
                 # calculate transfer volume
                 transfer_pas = 0
-                keys_to_remove = []
-                for key, value in transfer_volume.items():
-                    l2, s2, t_slot = key
-                    if l2 == int(l) and s2 == station_id and pre_time_second < t_slot <= int(t):
-                        keys_to_remove.append(key)
+
+                while True:
+                    temp_key = (int(l), station_id)
+                    if temp_key not in transfer_volume or not transfer_volume[temp_key]:
+                        break
+                    i = transfer_volume_points[temp_key]
+                    if i > len(transfer_volume[temp_key]) - 1:
+                        break
+                    t_slot, value = transfer_volume[temp_key][i]
+                    if t_slot > t:
+                        break
+                    elif pre_time_second < t_slot <= t:
                         transfer_pas += value
-                # remove keys
-                for key in keys_to_remove:
-                    del transfer_volume[key]
+                        transfer_volume_points[temp_key] = i + 1
 
                 wait_passengers = remaining_pas + arriving_pas + transfer_pas
                 timetable.p_wait[station_id].append((t, wait_passengers))
