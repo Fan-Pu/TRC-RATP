@@ -298,7 +298,6 @@ def gen_timetables(iter_max, lines, passenger_flows):
     random.seed(2023)
 
     timetable_pool = []
-    wait_time_dict = {}  # key l,n,i
     weights_dict = {(l, n): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N}  # key l,n
     for i in range(0, iter_max):
         print("iter: " + str(i))
@@ -332,7 +331,7 @@ def gen_timetables(iter_max, lines, passenger_flows):
                         direction = 0 if route[0] in line.up_stations else 1
                         service = TrainService(service_nums[l], direction, route)
 
-                        arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway)
+                        arr_time = max(start_time_secs, arr_slots[l, route[0]] + line.dwells[route[0]] + headway)
                         dep_time = arr_time + line.dwells[route[0]]
 
                         service.arrs.append(arr_time)
@@ -347,6 +346,9 @@ def gen_timetables(iter_max, lines, passenger_flows):
                         if service.arrs[0] >= time_span[-1] * 60 or service.deps[-1] >= END_TIME * 60:
                             need_break = True
                             break
+
+                        if l == '0' and route[-1] == 21:
+                            iisds = 0
 
                         service_nums[l] += 1
                         timetable.services[service.id] = service
@@ -379,11 +381,19 @@ def gen_timetables(iter_max, lines, passenger_flows):
 
         timetable_pool.append(timetable_net)
 
+        # simulate passenger flows and calculate service quality
         start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
+        avg_serv_quality = calculate_service_quality(timetable_net, lines)
+        timetable_net['avg_serv_quality'] = avg_serv_quality
         end_time = time.time()
         execution_time = end_time - start_time
         print(f"程序执行时间: {execution_time:.4f} 秒")
+
+        # generate vehicle circulations
+        gen_vehicle_circulation(timetable_net, lines)
+
+        # generate rolling stock allocation plan
 
         export_timetable(root_folder, timetable_net, lines)
 
@@ -441,7 +451,6 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
     core_slots = defaultdict(list)
 
     # !!! t (seconds) is starting from START_TIME
-    alight_volume = {}  # key (l,s,t)
     transfer_volume = {}  # key (l2,s2)
     transfer_volume_points = {}  # key (l2,s2)
 
@@ -463,13 +472,14 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
     # initialize p_wait, p_train, p_alight, p_transfer
     for l, timetable in timetable_net.items():
-        timetable.p_wait = {sta_id: [(START_TIME * 60, 0)] for sta_id in (lines[l].up_stations + lines[l].dn_stations)}
+        timetable.p_wait = {sta_id: [(START_TIME * 60, 0, 'init')] for sta_id in
+                            (lines[l].up_stations + lines[l].dn_stations)}
         timetable.p_train = {serv_id: {sta_id: 0 for sta_id in serv.route} for serv_id, serv in
                              timetable.services.items()}
-        timetable.p_alight = {serv_id: {sta_id: 0 for sta_id in serv.route} for serv_id, serv in
-                              timetable.services.items()}
-        timetable.p_transfer = {serv_id: {(s1, s2): 0 for (_, s1, _, s2) in lines[l].transfer_pairs}
-                                for serv_id in timetable.services.keys()}
+        # timetable.p_alight = {serv_id: {sta_id: 0 for sta_id in serv.route} for serv_id, serv in
+        #                       timetable.services.items()}
+        # timetable.p_transfer = {serv_id: {(s1, s2): 0 for (_, s1, _, s2) in lines[l].transfer_pairs}
+        #                         for serv_id in timetable.services.keys()}
 
     # simulate passenger flows
     for t, action_list in core_slots.items():  # t is starting from START_TIME
@@ -486,13 +496,11 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                     station_id - 1]
                 alight_pas = math.floor(passenger_in_train * alight_rate)
                 # update alight passengers
-                timetable.p_alight[service_id][station_id] = alight_pas
-                if alight_pas > 0:
-                    alight_volume[l, station_id, t] = alight_pas
+                # timetable.p_alight[service_id][station_id] = alight_pas
                 # update transfer passengers
                 for (l1, s1, l2, s2) in lines[l].transfer_pairs:
                     transfer_rate = passenger_flows.phi[l1, s1, l2, s2, t_minute]
-                    timetable.p_transfer[service_id][s1, l2, s2] = alight_pas * transfer_rate
+                    # timetable.p_transfer[service_id][s1, l2, s2] = alight_pas * transfer_rate
                     # ignore 0
                     temp_value = math.floor(alight_pas * transfer_rate)
                     arrive_t = int(t) + TRANSFER_SECS
@@ -509,7 +517,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 service = timetable.services[service_id]
                 station_id = service.route[service.arrs.index(t)]
                 # remaining passengers + new arriving passengers + transfer passengers
-                pre_time_second, remaining_pas = timetable.p_wait[station_id][-1]
+                pre_time_second, remaining_pas, _ = timetable.p_wait[station_id][-1]
                 pre_time_minute = round((pre_time_second - START_TIME * 60) / 60)
                 arriving_pas = math.ceil(sum([passenger_flows.d[int(l), station_id, t_slot]
                                               for t_slot in range(pre_time_minute, t_minute)]))
@@ -529,8 +537,9 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                         transfer_pas += value
                         transfer_volume_points[temp_key] = i + 1
 
-                wait_passengers = remaining_pas + arriving_pas + transfer_pas
-                timetable.p_wait[station_id].append((t, wait_passengers))
+                wait_passengers = remaining_pas + arriving_pas + math.floor(transfer_pas)
+                timetable.p_wait[station_id].append((t, wait_passengers, 'arr'))
+                # timetable.sum_passenger_number += arriving_pas
 
         # this slot contains departures
         if 'dep' in action_list:
@@ -540,7 +549,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 service = timetable.services[service_id]
                 station_id = service.route[service.deps.index(t)]
                 # remaining passengers + new arriving passengers + transfer passengers
-                pre_time_second, remaining_pas = timetable.p_wait[station_id][-1]
+                pre_time_second, remaining_pas, _ = timetable.p_wait[station_id][-1]
                 pre_time_minute = round((pre_time_second - START_TIME * 60) / 60)
                 arriving_pas = sum([passenger_flows.d[int(l), station_id, t_slot]
                                     for t_slot in range(pre_time_minute, t_minute)])
@@ -561,13 +570,59 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                         transfer_pas += value
                         transfer_volume_points[temp_key] = i + 1
 
-                wait_passengers = remaining_pas + arriving_pas + transfer_pas
-                timetable.p_wait[station_id].append((t, wait_passengers))
+                wait_passengers = remaining_pas + arriving_pas + math.floor(transfer_pas)
                 passenger_in_train = 0 if station_id == service.route[0] else timetable.p_train[service_id][
                     station_id - 1]
-                boarding_passengers = max(wait_passengers, TRAIN_CAPACITY - passenger_in_train)
+                boarding_passengers = min(wait_passengers, TRAIN_CAPACITY - passenger_in_train)
                 # update en-route passengers
                 timetable.p_train[service_id][station_id] = passenger_in_train + boarding_passengers
                 # update remaining passengers
                 wait_passengers -= boarding_passengers
-                timetable.p_wait[station_id].append((t, wait_passengers))
+                timetable.p_wait[station_id].append((t, wait_passengers, 'dep'))
+                # timetable.sum_passenger_number += arriving_pas
+
+
+def calculate_service_quality(timetable_net, lines):
+    service_quality = 0
+    for l, timetable in timetable_net.items():
+        line = lines[l]
+        for sta_id, wait_list in timetable.p_wait.items():
+            for i in range(len(wait_list) - 1):
+                avg_time_diff = 0.5 * (wait_list[i + 1][0] - wait_list[i][0])
+                avg_passenger_number = 0.5 * (wait_list[i + 1][1] + wait_list[i][1])
+                flag = wait_list[i + 1][2]
+                if avg_passenger_number > 0:
+                    timetable.sum_wait_time += avg_passenger_number * avg_time_diff
+                    if flag == 'arr':
+                        timetable.sum_wait_time_min += 0.5 * avg_passenger_number * HEADWAY_MIN
+                        timetable.sum_wait_time_max += 0.5 * avg_passenger_number * HEADWAY_MAX
+                    elif flag == 'dep':
+                        temp_wait_time = 0.5 * avg_passenger_number * line.dwells[sta_id]
+                        timetable.sum_wait_time_min += temp_wait_time
+                        timetable.sum_wait_time_max += temp_wait_time
+        temp_serv_quality = (timetable.sum_wait_time - timetable.sum_wait_time_min) / (
+                timetable.sum_wait_time_max - timetable.sum_wait_time_min)
+        service_quality += temp_serv_quality
+    return service_quality / len(lines)
+
+
+def gen_vehicle_circulation(timetable_net, lines):
+    for l, timetable in timetable_net.items():
+        line = lines[l]
+        services_queues = {route[-1]: {'from': [], 'to': []} for route in line.routes}
+        for service_id in timetable.up_services + timetable.dn_services:
+            service = timetable.services[service_id]
+            for turn_back_platform in services_queues.keys():
+                if service.route[-1] == turn_back_platform:
+                    services_queues[turn_back_platform]['from'].append(service)
+                if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
+                    services_queues[turn_back_platform]['to'].append(service)
+        # start linking services
+        for turn_back_platform in services_queues.keys():
+            service_queue = services_queues[turn_back_platform]
+            j = 0
+            for i in range(len(service_queue['from'])):
+                from_service = timetable.services[service_queue['from'][i]]
+                while True:
+                    to_service = timetable.services[service_queue['to'][j]]
+                    sdds = 0
