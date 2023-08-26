@@ -616,19 +616,57 @@ def gen_vehicle_circulation(timetable_net, lines):
             service = timetable.services[service_id]
             for turn_back_platform in services_queues.keys():
                 if service.route[-1] == turn_back_platform:
-                    services_queues[turn_back_platform]['from'].append(service)
+                    services_queues[turn_back_platform]['from'].append(service.id)
                 if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
-                    services_queues[turn_back_platform]['to'].append(service)
+                    services_queues[turn_back_platform]['to'].append(service.id)
         # start linking services
-        for services_queue in services_queues:
-            if len(services_queue['from']) == 0 or len(services_queue['to']) == 0:
-                ssds = 0
         for turn_back_platform in services_queues.keys():
             service_queue = services_queues[turn_back_platform]
-            j = 0
+            j_pivot = 0  # lies around the last i's minimum turnback time index
             for i in range(len(service_queue['from'])):
                 from_service = timetable.services[service_queue['from'][i]]
+                from_time = from_service.deps[-1]
+                j = j_pivot
                 while True:
+                    if j == len(service_queue['to']):
+                        break
                     to_service = timetable.services[service_queue['to'][j]]
-                    if
-                        sdds = 0
+                    to_time = to_service.arrs[0]
+                    # less than the minimum turnback time, move j to the next
+                    if to_time - from_time < TURNBACK_MIN_SECS:
+                        j += 1
+                        j_pivot = j
+                    # larger than the maximum turnback time
+                    elif to_time - from_time > TURNBACK_MAX_SECS:
+                        break
+                    # valid turnback time
+                    else:
+                        # to_service is already connected by other services
+                        if to_service.front_service != -1:
+                            j += 1
+                        # is valid to have a connection
+                        else:
+                            from_service.next_service = to_service.id
+                            to_service.front_service = from_service.id
+
+                            if from_service.first_service == -1:
+                                from_service.first_service = from_service.id
+
+                            to_service.first_service = from_service.first_service
+                            to_service.front_service = from_service.id
+                            from_service.next_service = to_service.id
+                            j_pivot = j + 1
+
+        # generate service journeys
+        for service_id in timetable.up_services + timetable.dn_services:
+            service = timetable.services[service_id]
+            if service.front_service == -1:
+                timetable.turn_back_connections[service_id] = [service_id]
+        for first_serv_id in timetable.turn_back_connections.keys():
+            temp_service = timetable.services[first_serv_id]
+            while temp_service.next_service != -1:
+                if temp_service.id != first_serv_id:
+                    timetable.turn_back_connections[first_serv_id].append(temp_service.id)
+                temp_service = timetable.services[temp_service.next_service]
+
+        ssdas = 0

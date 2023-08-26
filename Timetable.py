@@ -18,3 +18,5 @@ class Timetable:
         self.p_train = {}  # en-route passengers when it leaves the station, key: service_id
         # self.p_alight = {}  # alight passengers, key: service_id
         # self.p_transfer = {}  # transfer passengers, key: service_id
+
+        self.turn_back_connections = {}  # key: first_service_of_vehicle, value: consecutive_services_of_vehicle
