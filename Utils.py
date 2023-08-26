@@ -22,6 +22,8 @@ HEADWAY_MAX = 320
 HEADWAY_POOL = [i for i in range(HEADWAY_MIN, HEADWAY_MAX, 100)]
 TRAIN_CAPACITY = 1200  # loading capacity
 TRANSFER_SECS = 120  # fixed transfer time
+TURNBACK_MAX_SECS = 10 * 60  # maximum turnback time
+TURNBACK_MIN_SECS = 2 * 60  # minimum turnback time
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -618,6 +620,9 @@ def gen_vehicle_circulation(timetable_net, lines):
                 if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
                     services_queues[turn_back_platform]['to'].append(service)
         # start linking services
+        for services_queue in services_queues:
+            if len(services_queue['from']) == 0 or len(services_queue['to']) == 0:
+                ssds = 0
         for turn_back_platform in services_queues.keys():
             service_queue = services_queues[turn_back_platform]
             j = 0
@@ -625,4 +630,5 @@ def gen_vehicle_circulation(timetable_net, lines):
                 from_service = timetable.services[service_queue['from'][i]]
                 while True:
                     to_service = timetable.services[service_queue['to'][j]]
-                    sdds = 0
+                    if
+                        sdds = 0
