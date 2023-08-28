@@ -1,6 +1,5 @@
 import math
 import os
-import csv
 import time
 import statistics
 from RailLine import *
@@ -11,6 +10,7 @@ import pandas as pd
 import random
 import csv
 from collections import OrderedDict, defaultdict
+import gurobipy as gp
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -331,7 +331,7 @@ def gen_timetables(iter_max, lines, passenger_flows):
                         if (not is_in_peak_hour) and len(route) < len(line.up_stations):
                             continue
                         direction = 0 if route[0] in line.up_stations else 1
-                        service = TrainService(service_nums[l], direction, route)
+                        service = TrainService(service_nums[l], direction, route, line.line_id)
 
                         arr_time = max(start_time_secs, arr_slots[l, route[0]] + line.dwells[route[0]] + headway)
                         dep_time = arr_time + line.dwells[route[0]]
@@ -381,13 +381,10 @@ def gen_timetables(iter_max, lines, passenger_flows):
                                 arr_slots[l, sta_id] = arr_slots[l, sta_id - 1] + line.runtimes[
                                     sta_id - 1, sta_id] + line.dwells[sta_id - 1]
 
-        timetable_pool.append(timetable_net)
-
         # simulate passenger flows and calculate service quality
         start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
         avg_serv_quality = calculate_service_quality(timetable_net, lines)
-        timetable_net['avg_serv_quality'] = avg_serv_quality
         end_time = time.time()
         execution_time = end_time - start_time
         print(f"程序执行时间: {execution_time:.4f} 秒")
@@ -396,6 +393,9 @@ def gen_timetables(iter_max, lines, passenger_flows):
         gen_vehicle_circulation(timetable_net, lines)
 
         # generate rolling stock allocation plan
+        gen_rs_allocation_plan(timetable_net, lines)
+
+        timetable_pool.append((timetable_net, avg_serv_quality))
 
         export_timetable(root_folder, timetable_net, lines)
 
@@ -669,4 +669,15 @@ def gen_vehicle_circulation(timetable_net, lines):
                     timetable.turn_back_connections[first_serv_id].append(temp_service.id)
                 temp_service = timetable.services[temp_service.next_service]
 
-        ssdas = 0
+
+def gen_rs_allocation_plan(timetable_net, lines):
+    K = []
+    for timetable in timetable_net.values():
+        K += [(timetable.services[i].line_id, i) for i in timetable.turn_back_connections.keys()]
+    D_dep = {}
+    D_arr = {}
+
+    model = gp.Model()
+    x = {}
+    y = {}
+    # for k in
