@@ -10,3 +10,4 @@ class TrainService:
         self.front_service = -1  # turnback connection
         self.next_service = -1
         self.first_service = -1
+        self.last_service = -1

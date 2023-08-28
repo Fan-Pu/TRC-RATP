@@ -663,19 +663,36 @@ def gen_vehicle_circulation(timetable_net, lines):
             if service.front_service == -1:
                 timetable.turn_back_connections[service_id] = [service_id]
         for first_serv_id in timetable.turn_back_connections.keys():
+            last_serv_id = -1
             temp_service = timetable.services[first_serv_id]
             while temp_service.next_service != -1:
                 if temp_service.id != first_serv_id:
                     timetable.turn_back_connections[first_serv_id].append(temp_service.id)
                 temp_service = timetable.services[temp_service.next_service]
+            last_serv_id = temp_service.id
+            for serv_id in timetable.turn_back_connections[first_serv_id]:
+                service = timetable.services[serv_id]
+                service.last_service = last_serv_id
 
 
 def gen_rs_allocation_plan(timetable_net, lines):
-    K = []
+    # model inputs
+    K = []  # (first service index, line_id) of each vehicle
     for timetable in timetable_net.values():
         K += [(timetable.services[i].line_id, i) for i in timetable.turn_back_connections.keys()]
+    # model inputs
     D_dep = {}
     D_arr = {}
+    for line_id, first_serv_id in K:
+        line = lines[line_id]
+        timetable = timetable_net[line_id]
+        first_service = timetable.services[first_serv_id]
+        last_service = timetable.services[first_service.last_service]
+        first_serv_first_station = first_service.route[0]
+        last_serv_last_station = last_service.route[-1]
+        leave_depots = line.stations_conn_depots[first_serv_first_station]
+        enter_depots = line.stations_conn_depots[last_serv_last_station]
+        iisda = 0
 
     model = gp.Model()
     x = {}
