@@ -676,13 +676,13 @@ def gen_vehicle_circulation(timetable_net, lines):
 
 
 def gen_rs_allocation_plan(timetable_net, lines):
+    RS_allocations = {}  # key depot_id
+    RS_queues = {depot_id:defaultdict(list) for depot_id in }
     # model inputs
     K = []  # (first service index, line_id) of each vehicle
     for timetable in timetable_net.values():
         K += [(timetable.services[i].line_id, i) for i in timetable.turn_back_connections.keys()]
-    # model inputs
-    D_dep = {}
-    D_arr = {}
+
     for line_id, first_serv_id in K:
         line = lines[line_id]
         timetable = timetable_net[line_id]
@@ -690,11 +690,5 @@ def gen_rs_allocation_plan(timetable_net, lines):
         last_service = timetable.services[first_service.last_service]
         first_serv_first_station = first_service.route[0]
         last_serv_last_station = last_service.route[-1]
-        leave_depots = line.stations_conn_depots[first_serv_first_station]
-        enter_depots = line.stations_conn_depots[last_serv_last_station]
-        iisda = 0
-
-    model = gp.Model()
-    x = {}
-    y = {}
-    # for k in
+        leave_depot = line.stations_conn_depots[first_serv_first_station]
+        enter_depot = line.stations_conn_depots[last_serv_last_station]
