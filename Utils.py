@@ -111,6 +111,34 @@ def read_lines(folder_path):
     return lines
 
 
+def read_depots(folder_path):
+    csv_files = [file for file in os.listdir(folder_path) if file.endswith('.csv') and file != 'general_info.csv']
+
+    if not csv_files:
+        print("No CSV files found in the given folder.")
+        return
+
+    depots = {}
+    # read files
+    for csv_file in csv_files:
+        csv_file_path = os.path.join(folder_path, csv_file)
+        depot_id = csv_file.split(".")[0].split("-")[2]
+        depot = {'id': depot_id, 'conn_lines': [], 'conn_stations': {}, 'runtime': {}}
+        with open(csv_file_path, 'r', newline='') as file:
+            reader = csv.reader(file)
+            header = next(reader)
+            for row in reader:
+                _, capacity, conn_line_id, conn_station_id, runtime = row
+                if capacity != '':
+                    depot['capacity'] = int(capacity)
+                depot['conn_lines'].append(int(conn_line_id))
+                depot['conn_stations'][int(conn_line_id)] = int(conn_station_id)
+                depot['runtime'][(int(conn_line_id), int(conn_station_id))] = runtime
+        depots[depot_id] = depot
+
+    return depots
+
+
 def read_transect_flows(folder_path, type_name, lines):
     csv_files = [file for file in os.listdir(folder_path) if file.endswith('.csv')]
     sectional_flows = {line_id: {} for line_id in lines.keys()}  # section flow of all lines, key: line_id
@@ -292,7 +320,7 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
                     line1.transfer_pairs.append(temp_key)
 
 
-def gen_timetables(iter_max, lines, passenger_flows):
+def gen_timetables(iter_max, lines, depots, passenger_flows):
     root_folder = './test/'
     if not os.path.exists(root_folder):
         os.mkdir(root_folder)
@@ -393,7 +421,7 @@ def gen_timetables(iter_max, lines, passenger_flows):
         gen_vehicle_circulation(timetable_net, lines)
 
         # generate rolling stock allocation plan
-        gen_rs_allocation_plan(timetable_net, lines)
+        gen_rs_allocation_plan(timetable_net, lines, depots)
 
         timetable_pool.append((timetable_net, avg_serv_quality))
 
@@ -675,9 +703,9 @@ def gen_vehicle_circulation(timetable_net, lines):
                 service.last_service = last_serv_id
 
 
-def gen_rs_allocation_plan(timetable_net, lines):
+def gen_rs_allocation_plan(timetable_net, lines, depots):
     RS_allocations = {}  # key depot_id
-    RS_queues = {depot_id:defaultdict(list) for depot_id in }
+    RS_queues = {depot_id: defaultdict(list) for depot_id in depots.keys()}  # key: time_slot (arr/dep), value: vehicles
     # model inputs
     K = []  # (first service index, line_id) of each vehicle
     for timetable in timetable_net.values():
@@ -690,5 +718,10 @@ def gen_rs_allocation_plan(timetable_net, lines):
         last_service = timetable.services[first_service.last_service]
         first_serv_first_station = first_service.route[0]
         last_serv_last_station = last_service.route[-1]
-        leave_depot = line.stations_conn_depots[first_serv_first_station]
-        enter_depot = line.stations_conn_depots[last_serv_last_station]
+        leave_depot = depots[str(line.stations_conn_depots[first_serv_first_station])]
+        enter_depot = depots[str(line.stations_conn_depots[last_serv_last_station])]
+        leave_runtime = leave_depot['runtime'][int(line_id), first_serv_first_station]
+        enter_runtime = enter_depot['runtime'][int(line_id), last_serv_last_station]
+        RS_queues[leave_depot['id']][first_service.arrs[0] - leave_runtime].append((int(line_id), first_service.id))
+        RS_queues[enter_depot['id']][last_service.deps[-1] + enter_runtime].append((int(line_id), last_service.id))
+        kkkh=0
