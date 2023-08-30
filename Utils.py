@@ -3,6 +3,7 @@ import os
 import time
 import statistics
 from RailLine import *
+from Depot import *
 from PassengerFlow import *
 from Timetable import *
 from TrainService import *
@@ -31,7 +32,11 @@ N = [i for i in range(START_TIME, END_TIME + 1, TIME_PERIOD)]
 
 
 def read_lines(folder_path):
-    csv_files = [file for file in os.listdir(folder_path) if file.endswith('.csv') and file != 'general_info.csv']
+    csv_files = [
+        file
+        for file in os.listdir(folder_path)
+        if file.endswith(".csv") and file != "general_info.csv"
+    ]
 
     if not csv_files:
         print("No CSV files found in the given folder.")
@@ -39,8 +44,8 @@ def read_lines(folder_path):
 
     lines = {}
     # read general_info.csv
-    csv_file_path = os.path.join(folder_path, 'general_info.csv')
-    with open(csv_file_path, 'r', newline='') as file:
+    csv_file_path = os.path.join(folder_path, "general_info.csv")
+    with open(csv_file_path, "r", newline="") as file:
         reader = csv.reader(file)
         header = next(reader)
         for row in reader:
@@ -51,24 +56,35 @@ def read_lines(folder_path):
     for csv_file in csv_files:
         csv_file_path = os.path.join(folder_path, csv_file)
         line_id = csv_file.split(".")[0].split("-")[2]
-        with open(csv_file_path, 'r', newline='') as file:
+        with open(csv_file_path, "r", newline="") as file:
             reader = csv.reader(file)
             header = next(reader)
             rail_line = lines[line_id]
             for row in reader:
-                station_name, station_id, dwell_time, runtime, is_transfer_station, conn_depot_id = row
+                (
+                    station_name,
+                    station_id,
+                    dwell_time,
+                    runtime,
+                    is_transfer_station,
+                    conn_depot_id,
+                ) = row
 
                 rail_line.dwells[int(station_id)] = int(dwell_time)
                 if not int(station_id) in rail_line.up_stations:
                     rail_line.up_stations.append(int(station_id))
 
-                    if conn_depot_id != '':
+                    if conn_depot_id != "":
                         rail_line.conn_depots.append(int(conn_depot_id))
-                        rail_line.stations_conn_depots[int(station_id)] = int(conn_depot_id)
+                        rail_line.stations_conn_depots[int(station_id)] = int(
+                            conn_depot_id
+                        )
 
                     # add sections
-                    if runtime != '':
-                        rail_line.runtimes[(int(station_id), int(station_id) + 1)] = int(runtime)
+                    if runtime != "":
+                        rail_line.runtimes[
+                            (int(station_id), int(station_id) + 1)
+                        ] = int(runtime)
                 else:
                     station_cnt = len(rail_line.up_stations)
                     temp_runtime = rail_line.runtimes[(station_cnt - 1, station_cnt)]
@@ -82,7 +98,9 @@ def read_lines(folder_path):
     # generate values for down direction
     for key, line in lines.items():
         # generate stations
-        line.dn_stations = [i for i in range(len(line.up_stations), 2 * len(line.up_stations))]
+        line.dn_stations = [
+            i for i in range(len(line.up_stations), 2 * len(line.up_stations))
+        ]
         runtimes = {}
         station_cnt = len(line.up_stations)
         for (i, j), runtime in line.runtimes.items():
@@ -96,10 +114,17 @@ def read_lines(folder_path):
         # add down direction platform names
         for station_id in line.dn_stations:
             if (station_id, 1) not in line.platform_names:
-                platform_name = line.platform_names[(2 * len(line.up_stations) - station_id - 1, 0)]
+                platform_name = line.platform_names[
+                    (2 * len(line.up_stations) - station_id - 1, 0)
+                ]
                 line.platform_names[(station_id, 1)] = platform_name
         # set down direction dwells
-        line.dwells.update({2 * len(line.up_stations) - sta_id - 1: value for sta_id, value in line.dwells.items()})
+        line.dwells.update(
+            {
+                2 * len(line.up_stations) - sta_id - 1: value
+                for sta_id, value in line.dwells.items()
+            }
+        )
 
     # generate feasible routes (short turning routes needs to be determined by passenger flow)
     for key, line in lines.items():
@@ -112,7 +137,11 @@ def read_lines(folder_path):
 
 
 def read_depots(folder_path):
-    csv_files = [file for file in os.listdir(folder_path) if file.endswith('.csv') and file != 'general_info.csv']
+    csv_files = [
+        file
+        for file in os.listdir(folder_path)
+        if file.endswith(".csv") and file != "general_info.csv"
+    ]
 
     if not csv_files:
         print("No CSV files found in the given folder.")
@@ -123,37 +152,45 @@ def read_depots(folder_path):
     for csv_file in csv_files:
         csv_file_path = os.path.join(folder_path, csv_file)
         depot_id = csv_file.split(".")[0].split("-")[2]
-        depot = {'id': depot_id, 'conn_lines': [], 'conn_stations': {}, 'runtime': {}}
-        with open(csv_file_path, 'r', newline='') as file:
+        depot = Depot(depot_id)
+        with open(csv_file_path, "r", newline="") as file:
             reader = csv.reader(file)
             header = next(reader)
             for row in reader:
                 _, capacity, conn_line_id, conn_station_id, runtime = row
-                if capacity != '':
-                    depot['capacity'] = int(capacity)
-                depot['conn_lines'].append(int(conn_line_id))
-                depot['conn_stations'][int(conn_line_id)] = int(conn_station_id)
-                depot['runtime'][(int(conn_line_id), int(conn_station_id))] = int(runtime)
+                if capacity != "":
+                    depot.capacity = int(capacity)
+                depot.conn_lines.append(int(conn_line_id))
+                depot.conn_stations[int(conn_line_id)] = int(conn_station_id)
+                depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(
+                    runtime
+                )
         depots[depot_id] = depot
 
     return depots
 
 
 def read_transect_flows(folder_path, type_name, lines):
-    csv_files = [file for file in os.listdir(folder_path) if file.endswith('.csv')]
-    sectional_flows = {line_id: {} for line_id in lines.keys()}  # section flow of all lines, key: line_id
+    csv_files = [file for file in os.listdir(folder_path) if file.endswith(".csv")]
+    sectional_flows = {
+        line_id: {} for line_id in lines.keys()
+    }  # section flow of all lines, key: line_id
     # for each line
     for csv_file in csv_files:
         csv_file_path = os.path.join(folder_path, csv_file)
         _, _, line_id, _, direction_flag = csv_file.split(".")[0].split("-")
         line = lines[line_id]
         sectional_flow = []  # section flow for this line and this direction
-        with open(csv_file_path, 'r', newline='') as file:
+        with open(csv_file_path, "r", newline="") as file:
             reader = csv.reader(file)
             for row in reader:
                 row_data = {}
                 for i in range(1, len(row)):
-                    sta_id = i - 1 if direction_flag == '0' else i - 1 + len(line.up_stations)
+                    sta_id = (
+                        i - 1
+                        if direction_flag == "0"
+                        else i - 1 + len(line.up_stations)
+                    )
                     row_data[(sta_id, sta_id + 1)] = int(row[i])
                 sectional_flow.append(row_data)
 
@@ -165,68 +202,110 @@ def read_transect_flows(folder_path, type_name, lines):
 def set_line_short_routes(lines, passenger_flows):
     for line_id, line in lines.items():
         # check if it has middle stations that connect with depots
-        mid_station_conn_depots = [i for i in line.stations_conn_depots
-                                   if i not in [line.up_stations[0], line.up_stations[-1],
-                                                line.dn_stations[0], line.dn_stations[-1]]]
+        mid_station_conn_depots = [
+            i
+            for i in line.stations_conn_depots
+            if i
+               not in [
+                   line.up_stations[0],
+                   line.up_stations[-1],
+                   line.dn_stations[0],
+                   line.dn_stations[-1],
+               ]
+        ]
         if len(mid_station_conn_depots) == 0:
             continue
         flow_data = passenger_flows.sectional_flows[line.line_id]
         is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
-        new_short_routes = []  # short routes need to be added if is_flow_unbalance is True
+        new_short_routes = (
+            []
+        )  # short routes need to be added if is_flow_unbalance is True
 
         for window in PEAK_HOURS:
-            if is_flow_unbalance: break
+            if is_flow_unbalance:
+                break
 
-            start_time_id, end_time_id = [int((t - START_TIME) / INTERVAL) for t in window]
+            start_time_id, end_time_id = [
+                int((t - START_TIME) / INTERVAL) for t in window
+            ]
             # up direction and down direction flows
             for key, rows in flow_data.items():
                 # for each row (in flow_data) during peak hours
-                if key == '0':  # up direction
+                if key == "0":  # up direction
                     mid_station_id = min(mid_station_conn_depots)
-                    routes = [[i for i in range(line.up_stations[0], mid_station_id + 1)],
-                              [i for i in range(mid_station_id, line.up_stations[-1] + 1)]]
-                    avg_passenger_flows = [[], []]  # flows for two routes over several hours of peak hours
-                    for t in range(start_time_id, end_time_id):
-                        row = rows[t]
-                        for k in range(0, len(routes)):
-                            route = routes[k]
-                            # average flow over the route
-                            avg_passenger_flow = sum([int(row[(i, i + 1)]) for i in route[:-1]]) / (len(route) - 1)
-                            avg_passenger_flows[k].append(avg_passenger_flow)
-                    # average flow over peak hours and routes
-                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
-                                           statistics.mean(avg_passenger_flows[-1])]
-                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
-                        is_flow_unbalance = True
-                        # generate short routes
-                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
-                        short_route = routes[short_route_id]
-                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
-                        new_short_routes += [short_route, short_route_reverse]
-                        break  # breaks 'for key, rows in flow_data.items()'
-
-                else:  # down direction
-                    mid_station_id = max(mid_station_conn_depots)
-                    routes = [[i for i in range(line.dn_stations[0], mid_station_id + 1)],
-                              [i for i in range(mid_station_id, line.dn_stations[-1] + 1)]]
-                    avg_passenger_flows = [[], []]  # flows for two routes over several hours of peak hours
+                    routes = [
+                        [i for i in range(line.up_stations[0], mid_station_id + 1)],
+                        [i for i in range(mid_station_id, line.up_stations[-1] + 1)],
+                    ]
+                    avg_passenger_flows = [
+                        [],
+                        [],
+                    ]  # flows for two routes over several hours of peak hours
                     for t in range(start_time_id, end_time_id):
                         row = rows[t]
                         for k in range(0, len(routes)):
                             route = routes[k]
                             # average flow over the route
                             avg_passenger_flow = sum(
-                                [int(row[(i, i + 1)]) for i in route[:-1]]) / (len(route) - 1)
+                                [int(row[(i, i + 1)]) for i in route[:-1]]
+                            ) / (len(route) - 1)
                             avg_passenger_flows[k].append(avg_passenger_flow)
                     # average flow over peak hours and routes
-                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
-                                           statistics.mean(avg_passenger_flows[-1])]
-                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
+                    avg_passenger_flows = [
+                        statistics.mean(avg_passenger_flows[0]),
+                        statistics.mean(avg_passenger_flows[-1]),
+                    ]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(
+                            avg_passenger_flows
+                    ):
                         is_flow_unbalance = True
                         # generate short routes
-                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
+                        short_route_id = avg_passenger_flows.index(
+                            max(avg_passenger_flows)
+                        )
                         short_route = routes[short_route_id]
-                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
+                        short_route_reverse = [
+                                                  2 * len(line.up_stations) - 1 - i for i in short_route
+                                              ][::-1]
+                        new_short_routes += [short_route, short_route_reverse]
+                        break  # breaks 'for key, rows in flow_data.items()'
+
+                else:  # down direction
+                    mid_station_id = max(mid_station_conn_depots)
+                    routes = [
+                        [i for i in range(line.dn_stations[0], mid_station_id + 1)],
+                        [i for i in range(mid_station_id, line.dn_stations[-1] + 1)],
+                    ]
+                    avg_passenger_flows = [
+                        [],
+                        [],
+                    ]  # flows for two routes over several hours of peak hours
+                    for t in range(start_time_id, end_time_id):
+                        row = rows[t]
+                        for k in range(0, len(routes)):
+                            route = routes[k]
+                            # average flow over the route
+                            avg_passenger_flow = sum(
+                                [int(row[(i, i + 1)]) for i in route[:-1]]
+                            ) / (len(route) - 1)
+                            avg_passenger_flows[k].append(avg_passenger_flow)
+                    # average flow over peak hours and routes
+                    avg_passenger_flows = [
+                        statistics.mean(avg_passenger_flows[0]),
+                        statistics.mean(avg_passenger_flows[-1]),
+                    ]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(
+                            avg_passenger_flows
+                    ):
+                        is_flow_unbalance = True
+                        # generate short routes
+                        short_route_id = avg_passenger_flows.index(
+                            max(avg_passenger_flows)
+                        )
+                        short_route = routes[short_route_id]
+                        short_route_reverse = [
+                                                  2 * len(line.up_stations) - 1 - i for i in short_route
+                                              ][::-1]
                         new_short_routes += [short_route, short_route_reverse]
                         break  # breaks 'for key, rows in flow_data.items()'
 
@@ -247,14 +326,22 @@ def read_arrival_rates(folder_path, lines, passenger_flows):
             column_num = df.shape[1]
             # for every row
             for index, row in df.iterrows():
-                station_id = int(row[0]) if sheet_name == 'up' else 2 * len(line.up_stations) - 1 - int(row[0])
+                station_id = (
+                    int(row[0])
+                    if sheet_name == "up"
+                    else 2 * len(line.up_stations) - 1 - int(row[0])
+                )
                 for j in range(1, column_num):
                     start_t = (j - 1) * INTERVAL
                     end_t = start_t + INTERVAL
                     # calculate arrival rate (for each second)
                     arrival_rate = row[j] / INTERVAL
                     passenger_flows.d.update(
-                        {(int(line_id), station_id, t): arrival_rate for t in range(start_t, end_t)})
+                        {
+                            (int(line_id), station_id, t): arrival_rate
+                            for t in range(start_t, end_t)
+                        }
+                    )
 
 
 def read_alight_rates(folder_path, lines, passenger_flows):
@@ -267,53 +354,83 @@ def read_alight_rates(folder_path, lines, passenger_flows):
         all_sheets = pd.read_excel(file_path, sheet_name=None)
         # read every sheet
         for sheet_name, df in all_sheets.items():
-            if 'alight' not in sheet_name:
+            if "alight" not in sheet_name:
                 continue
             column_num = df.shape[1]
             # transect volume in this direction
-            transect_volume = sectional_flows['0'] if sheet_name == 'alight-up' \
-                else sectional_flows['1']
+            transect_volume = (
+                sectional_flows["0"]
+                if sheet_name == "alight-up"
+                else sectional_flows["1"]
+            )
             # for every row
             for index, row in df.iterrows():
-                station_id = int(row[0]) if sheet_name == 'alight-up' else 2 * len(line.up_stations) - 1 - int(row[0])
+                station_id = (
+                    int(row[0])
+                    if sheet_name == "alight-up"
+                    else 2 * len(line.up_stations) - 1 - int(row[0])
+                )
                 for j in range(1, column_num):
                     start_t = (j - 1) * INTERVAL
                     end_t = start_t + INTERVAL
                     if station_id in [line.up_stations[0], line.dn_stations[0]]:
                         alight_rate = 0  # the first station no one alights the train
                     elif station_id in [line.up_stations[-1], line.dn_stations[-1]]:
-                        alight_rate = 1  # the last station all passengers alight the train
+                        alight_rate = (
+                            1  # the last station all passengers alight the train
+                        )
                     else:
-                        front_transect_volume = transect_volume[j - 1][(station_id - 1, station_id)]
+                        front_transect_volume = transect_volume[j - 1][
+                            (station_id - 1, station_id)
+                        ]
                         alight_num = min(front_transect_volume, int(row[j]))
                         alight_rate = alight_num / max(front_transect_volume, 0.000001)
                     passenger_flows.theta.update(
-                        {(int(line_id), station_id, t): alight_rate for t in range(start_t, end_t)})
+                        {
+                            (int(line_id), station_id, t): alight_rate
+                            for t in range(start_t, end_t)
+                        }
+                    )
 
 
 def read_transfer_rates(folder_path, lines, passenger_flows):
     for filename in os.listdir(folder_path):
-        station_name = filename.split('.')[0]
+        station_name = filename.split(".")[0]
         file_path = os.path.join(folder_path, filename)
         # read sheet
         df = pd.read_excel(file_path)
         column_num = df.shape[1]
         for index, row in df.iterrows():
-            line_id1, dir_flag1, line_id2, dir_flag2 = row[0].split(',')
+            line_id1, dir_flag1, line_id2, dir_flag2 = row[0].split(",")
             line1 = lines[line_id1]
             line2 = lines[line_id2]
-            station_id1 = [sta_id for (sta_id, direction), value in line1.platform_names.items()
-                           if direction == int(dir_flag1) and value == station_name][0]
-            station_id2 = [sta_id for (sta_id, direction), value in line2.platform_names.items()
-                           if direction == int(dir_flag2) and value == station_name][0]
+            station_id1 = [
+                sta_id
+                for (sta_id, direction), value in line1.platform_names.items()
+                if direction == int(dir_flag1) and value == station_name
+            ][0]
+            station_id2 = [
+                sta_id
+                for (sta_id, direction), value in line2.platform_names.items()
+                if direction == int(dir_flag2) and value == station_name
+            ][0]
             # for each column
             for j in range(1, column_num):
                 start_t = (j - 1) * INTERVAL
                 end_t = start_t + INTERVAL
                 transfer_rate = float(row[j])
                 passenger_flows.phi.update(
-                    {(int(line_id1), station_id1, int(line_id2), station_id2, t): transfer_rate for t in
-                     range(start_t, end_t)})
+                    {
+                        (
+                            int(line_id1),
+                            station_id1,
+                            int(line_id2),
+                            station_id2,
+                            t,
+                        ): transfer_rate
+                        for t in range(start_t, end_t)
+                    }
+                )
                 # save transfer connections
                 temp_key = (int(line_id1), station_id1, int(line_id2), station_id2)
                 if temp_key not in line1.transfer_pairs:
@@ -321,14 +438,16 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
 
 
 def gen_timetables(iter_max, lines, depots, passenger_flows):
-    root_folder = './test/'
+    root_folder = "./test/"
     if not os.path.exists(root_folder):
         os.mkdir(root_folder)
 
     random.seed(2023)
 
     timetable_pool = []
-    weights_dict = {(l, n): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N}  # key l,n
+    weights_dict = {
+        (l, n): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N
+    }  # key l,n
     for i in range(0, iter_max):
         print("iter: " + str(i))
         # generate a timetable for the network
@@ -343,8 +462,12 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         # for each time window
         for n in N:
-            is_in_peak_hour = True if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1]) or (
-                    PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1]) else False
+            is_in_peak_hour = (
+                True
+                if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1])
+                   or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1])
+                else False
+            )
             time_span = [k for k in range(n, n + TIME_PERIOD)]
             for l, line in lines.items():  # for each line
                 # select a fixed headway for this line within this window
@@ -359,9 +482,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         if (not is_in_peak_hour) and len(route) < len(line.up_stations):
                             continue
                         direction = 0 if route[0] in line.up_stations else 1
-                        service = TrainService(service_nums[l], direction, route, line.line_id)
+                        service = TrainService(
+                            service_nums[l], direction, route, line.line_id
+                        )
 
-                        arr_time = max(start_time_secs, arr_slots[l, route[0]] + line.dwells[route[0]] + headway)
+                        arr_time = max(
+                            start_time_secs,
+                            arr_slots[l, route[0]] + line.dwells[route[0]] + headway,
+                        )
                         dep_time = arr_time + line.dwells[route[0]]
 
                         service.arrs.append(arr_time)
@@ -373,11 +501,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                             service.arrs.append(arr_time)
                             service.deps.append(dep_time)
 
-                        if service.arrs[0] >= time_span[-1] * 60 or service.deps[-1] >= END_TIME * 60:
+                        if (
+                                service.arrs[0] >= time_span[-1] * 60
+                                or service.deps[-1] >= END_TIME * 60
+                        ):
                             need_break = True
                             break
 
-                        if l == '0' and route[-1] == 21:
+                        if l == "0" and route[-1] == 21:
                             iisds = 0
 
                         service_nums[l] += 1
@@ -392,22 +523,42 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         for k in range(0, len(service.route)):
                             sta_id = service.route[k]
                             arr_slots[l, sta_id] = service.arrs[k]
-                        min_sta_id = line.up_stations[0] if service.direction == 0 else line.dn_stations[0]
-                        max_sta_id = line.up_stations[-1] if service.direction == 0 else line.dn_stations[-1]
+                        min_sta_id = (
+                            line.up_stations[0]
+                            if service.direction == 0
+                            else line.dn_stations[0]
+                        )
+                        max_sta_id = (
+                            line.up_stations[-1]
+                            if service.direction == 0
+                            else line.dn_stations[-1]
+                        )
                         for sta_id in range(service.route[0] - 1, min_sta_id - 1, -1):
                             if sta_id == service.route[0] - 1:
-                                arr_slots[l, sta_id] = service.arrs[0] - line.runtimes[sta_id, sta_id + 1] - \
-                                                       line.dwells[sta_id]
+                                arr_slots[l, sta_id] = (
+                                        service.arrs[0]
+                                        - line.runtimes[sta_id, sta_id + 1]
+                                        - line.dwells[sta_id]
+                                )
                             else:
-                                arr_slots[l, sta_id] = arr_slots[l, sta_id + 1] - line.runtimes[
-                                    sta_id, sta_id + 1] - line.dwells[sta_id]
+                                arr_slots[l, sta_id] = (
+                                        arr_slots[l, sta_id + 1]
+                                        - line.runtimes[sta_id, sta_id + 1]
+                                        - line.dwells[sta_id]
+                                )
                         for sta_id in range(service.route[-1] + 1, max_sta_id + 1):
                             if sta_id == service.route[-1] + 1:
-                                arr_slots[l, sta_id] = service.arrs[-1] + line.runtimes[sta_id - 1, sta_id] + \
-                                                       line.dwells[sta_id - 1]
+                                arr_slots[l, sta_id] = (
+                                        service.arrs[-1]
+                                        + line.runtimes[sta_id - 1, sta_id]
+                                        + line.dwells[sta_id - 1]
+                                )
                             else:
-                                arr_slots[l, sta_id] = arr_slots[l, sta_id - 1] + line.runtimes[
-                                    sta_id - 1, sta_id] + line.dwells[sta_id - 1]
+                                arr_slots[l, sta_id] = (
+                                        arr_slots[l, sta_id - 1]
+                                        + line.runtimes[sta_id - 1, sta_id]
+                                        + line.dwells[sta_id - 1]
+                                )
 
         # simulate passenger flows and calculate service quality
         start_time = time.time()
@@ -451,12 +602,12 @@ def roulette_selection(pool, weights=None):
 def export_timetable(folder, timetable_net, lines):
     for l, timetable in timetable_net.items():
         line = lines[l]
-        folder_name = folder + str(l) + '/'
+        folder_name = folder + str(l) + "/"
         if not os.path.exists(folder_name):
             os.mkdir(folder_name)
         for serv_id, service in timetable.services.items():
-            csv_file_path = folder_name + 'vehicle[{}].csv'.format(str(serv_id))
-            csv_data = [['line_idx', 'sta_idx', 'dir', 'type', 'time', 'depot_idx']]
+            csv_file_path = folder_name + "vehicle[{}].csv".format(str(serv_id))
+            csv_data = [["line_idx", "sta_idx", "dir", "type", "time", "depot_idx"]]
             for i in range(0, len(service.route)):
                 sta_id = service.route[i]
                 arr_time = service.arrs[i]
@@ -464,13 +615,13 @@ def export_timetable(folder, timetable_net, lines):
                 direction = service.direction
                 if direction == 1:
                     sta_id = 2 * len(line.up_stations) - sta_id - 1
-                csv_data.append([l, sta_id, direction, 'arr', arr_time, -1])
-                csv_data.append([l, sta_id, direction, 'dep', dep_time, -1])
+                csv_data.append([l, sta_id, direction, "arr", arr_time, -1])
+                csv_data.append([l, sta_id, direction, "dep", dep_time, -1])
 
-            csv_data.insert(1, [-1, -1, -1, 'depot_out', service.arrs[0] - 120, 0])
-            csv_data.append([-1, -1, -1, 'depot_in', service.deps[-1] + 120, 0])
+            csv_data.insert(1, [-1, -1, -1, "depot_out", service.arrs[0] - 120, 0])
+            csv_data.append([-1, -1, -1, "depot_in", service.deps[-1] + 120, 0])
 
-            with open(csv_file_path, mode='w', newline='') as file:
+            with open(csv_file_path, mode="w", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerows(csv_data)
 
@@ -489,12 +640,12 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
         for service_id, service in timetable.services.items():
             for t in service.arrs:
                 arrive_slots[t].append((l, service_id))
-                if 'arr' not in core_slots[t]:
-                    core_slots[t].append('arr')
+                if "arr" not in core_slots[t]:
+                    core_slots[t].append("arr")
             for t in service.deps:
                 depart_slots[t].append((l, service_id))
-                if 'dep' not in core_slots[t]:
-                    core_slots[t].append('dep')
+                if "dep" not in core_slots[t]:
+                    core_slots[t].append("dep")
     # sort
     arrive_slots = OrderedDict(sorted(arrive_slots.items()))
     depart_slots = OrderedDict(sorted(depart_slots.items()))
@@ -502,10 +653,14 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
     # initialize p_wait, p_train, p_alight, p_transfer
     for l, timetable in timetable_net.items():
-        timetable.p_wait = {sta_id: [(START_TIME * 60, 0, 'init')] for sta_id in
-                            (lines[l].up_stations + lines[l].dn_stations)}
-        timetable.p_train = {serv_id: {sta_id: 0 for sta_id in serv.route} for serv_id, serv in
-                             timetable.services.items()}
+        timetable.p_wait = {
+            sta_id: [(START_TIME * 60, 0, "init")]
+            for sta_id in (lines[l].up_stations + lines[l].dn_stations)
+        }
+        timetable.p_train = {
+            serv_id: {sta_id: 0 for sta_id in serv.route}
+            for serv_id, serv in timetable.services.items()
+        }
         # timetable.p_alight = {serv_id: {sta_id: 0 for sta_id in serv.route} for serv_id, serv in
         #                       timetable.services.items()}
         # timetable.p_transfer = {serv_id: {(s1, s2): 0 for (_, s1, _, s2) in lines[l].transfer_pairs}
@@ -515,15 +670,18 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
     for t, action_list in core_slots.items():  # t is starting from START_TIME
         t_minute = round((int(t) - START_TIME * 60) / 60)
         # this slot contains arrivals
-        if 'arr' in action_list:
+        if "arr" in action_list:
             # calculate the alight passengers and transfer passengers
             for l, service_id in arrive_slots[t]:
                 timetable = timetable_net[l]
                 service = timetable.services[service_id]
                 station_id = service.route[service.arrs.index(t)]
                 alight_rate = passenger_flows.theta[int(l), station_id, t_minute]
-                passenger_in_train = 0 if station_id == service.route[0] else timetable.p_train[service_id][
-                    station_id - 1]
+                passenger_in_train = (
+                    0
+                    if station_id == service.route[0]
+                    else timetable.p_train[service_id][station_id - 1]
+                )
                 alight_pas = math.floor(passenger_in_train * alight_rate)
                 # update alight passengers
                 # timetable.p_alight[service_id][station_id] = alight_pas
@@ -549,8 +707,14 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 # remaining passengers + new arriving passengers + transfer passengers
                 pre_time_second, remaining_pas, _ = timetable.p_wait[station_id][-1]
                 pre_time_minute = round((pre_time_second - START_TIME * 60) / 60)
-                arriving_pas = math.ceil(sum([passenger_flows.d[int(l), station_id, t_slot]
-                                              for t_slot in range(pre_time_minute, t_minute)]))
+                arriving_pas = math.ceil(
+                    sum(
+                        [
+                            passenger_flows.d[int(l), station_id, t_slot]
+                            for t_slot in range(pre_time_minute, t_minute)
+                        ]
+                    )
+                )
                 # calculate transfer volume
                 transfer_pas = 0
                 while True:
@@ -567,12 +731,14 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                         transfer_pas += value
                         transfer_volume_points[temp_key] = i + 1
 
-                wait_passengers = remaining_pas + arriving_pas + math.floor(transfer_pas)
-                timetable.p_wait[station_id].append((t, wait_passengers, 'arr'))
+                wait_passengers = (
+                        remaining_pas + arriving_pas + math.floor(transfer_pas)
+                )
+                timetable.p_wait[station_id].append((t, wait_passengers, "arr"))
                 # timetable.sum_passenger_number += arriving_pas
 
         # this slot contains departures
-        if 'dep' in action_list:
+        if "dep" in action_list:
             # calculate the waiting passengers and boarding passengers
             for l, service_id in depart_slots[t]:
                 timetable = timetable_net[l]
@@ -581,8 +747,12 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                 # remaining passengers + new arriving passengers + transfer passengers
                 pre_time_second, remaining_pas, _ = timetable.p_wait[station_id][-1]
                 pre_time_minute = round((pre_time_second - START_TIME * 60) / 60)
-                arriving_pas = sum([passenger_flows.d[int(l), station_id, t_slot]
-                                    for t_slot in range(pre_time_minute, t_minute)])
+                arriving_pas = sum(
+                    [
+                        passenger_flows.d[int(l), station_id, t_slot]
+                        for t_slot in range(pre_time_minute, t_minute)
+                    ]
+                )
                 # calculate transfer volume
                 transfer_pas = 0
 
@@ -600,15 +770,24 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                         transfer_pas += value
                         transfer_volume_points[temp_key] = i + 1
 
-                wait_passengers = remaining_pas + arriving_pas + math.floor(transfer_pas)
-                passenger_in_train = 0 if station_id == service.route[0] else timetable.p_train[service_id][
-                    station_id - 1]
-                boarding_passengers = min(wait_passengers, TRAIN_CAPACITY - passenger_in_train)
+                wait_passengers = (
+                        remaining_pas + arriving_pas + math.floor(transfer_pas)
+                )
+                passenger_in_train = (
+                    0
+                    if station_id == service.route[0]
+                    else timetable.p_train[service_id][station_id - 1]
+                )
+                boarding_passengers = min(
+                    wait_passengers, TRAIN_CAPACITY - passenger_in_train
+                )
                 # update en-route passengers
-                timetable.p_train[service_id][station_id] = passenger_in_train + boarding_passengers
+                timetable.p_train[service_id][station_id] = (
+                        passenger_in_train + boarding_passengers
+                )
                 # update remaining passengers
                 wait_passengers -= boarding_passengers
-                timetable.p_wait[station_id].append((t, wait_passengers, 'dep'))
+                timetable.p_wait[station_id].append((t, wait_passengers, "dep"))
                 # timetable.sum_passenger_number += arriving_pas
 
 
@@ -623,15 +802,22 @@ def calculate_service_quality(timetable_net, lines):
                 flag = wait_list[i + 1][2]
                 if avg_passenger_number > 0:
                     timetable.sum_wait_time += avg_passenger_number * avg_time_diff
-                    if flag == 'arr':
-                        timetable.sum_wait_time_min += 0.5 * avg_passenger_number * HEADWAY_MIN
-                        timetable.sum_wait_time_max += 0.5 * avg_passenger_number * HEADWAY_MAX
-                    elif flag == 'dep':
-                        temp_wait_time = 0.5 * avg_passenger_number * line.dwells[sta_id]
+                    if flag == "arr":
+                        timetable.sum_wait_time_min += (
+                                0.5 * avg_passenger_number * HEADWAY_MIN
+                        )
+                        timetable.sum_wait_time_max += (
+                                0.5 * avg_passenger_number * HEADWAY_MAX
+                        )
+                    elif flag == "dep":
+                        temp_wait_time = (
+                                0.5 * avg_passenger_number * line.dwells[sta_id]
+                        )
                         timetable.sum_wait_time_min += temp_wait_time
                         timetable.sum_wait_time_max += temp_wait_time
         temp_serv_quality = (timetable.sum_wait_time - timetable.sum_wait_time_min) / (
-                timetable.sum_wait_time_max - timetable.sum_wait_time_min)
+                timetable.sum_wait_time_max - timetable.sum_wait_time_min
+        )
         service_quality += temp_serv_quality
     return service_quality / len(lines)
 
@@ -639,26 +825,29 @@ def calculate_service_quality(timetable_net, lines):
 def gen_vehicle_circulation(timetable_net, lines, depots):
     for l, timetable in timetable_net.items():
         line = lines[l]
-        services_queues = {route[-1]: {'from': [], 'to': []} for route in line.routes}
+        services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
         for service_id in timetable.up_services + timetable.dn_services:
             service = timetable.services[service_id]
             for turn_back_platform in services_queues.keys():
                 if service.route[-1] == turn_back_platform:
-                    services_queues[turn_back_platform]['from'].append(service.id)
-                if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
-                    services_queues[turn_back_platform]['to'].append(service.id)
+                    services_queues[turn_back_platform]["from"].append(service.id)
+                if (
+                        service.route[0]
+                        == 2 * len(line.up_stations) - 1 - turn_back_platform
+                ):
+                    services_queues[turn_back_platform]["to"].append(service.id)
         # start linking services
         for turn_back_platform in services_queues.keys():
             service_queue = services_queues[turn_back_platform]
             j_pivot = 0  # lies around the last i's minimum turnback time index
-            for i in range(len(service_queue['from'])):
-                from_service = timetable.services[service_queue['from'][i]]
+            for i in range(len(service_queue["from"])):
+                from_service = timetable.services[service_queue["from"][i]]
                 from_time = from_service.deps[-1]
                 j = j_pivot
                 while True:
-                    if j == len(service_queue['to']):
+                    if j == len(service_queue["to"]):
                         break
-                    to_service = timetable.services[service_queue['to'][j]]
+                    to_service = timetable.services[service_queue["to"][j]]
                     to_time = to_service.arrs[0]
                     # less than the minimum turnback time, move j to the next
                     if to_time - from_time < TURNBACK_MIN_SECS:
@@ -694,7 +883,9 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
             temp_service = timetable.services[first_serv_id]
             while temp_service.next_service != -1:
                 if temp_service.id != first_serv_id:
-                    timetable.turn_back_connections[first_serv_id].append(temp_service.id)
+                    timetable.turn_back_connections[first_serv_id].append(
+                        temp_service.id
+                    )
                 temp_service = timetable.services[temp_service.next_service]
             last_serv_id = temp_service.id
             if temp_service.id != first_serv_id:
@@ -753,17 +944,24 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
         for key in to_delete:
             del timetable.turn_back_connections[key]
         for key_new, key_delete in to_replace:
-            timetable.turn_back_connections[key_new] = timetable.turn_back_connections[key_delete]
+            timetable.turn_back_connections[key_new] = timetable.turn_back_connections[
+                key_delete
+            ]
             del timetable.turn_back_connections[key_delete]
 
 
 def gen_rs_allocation_plan(timetable_net, lines, depots):
     RS_allocations = {}  # key depot_id
-    RS_queues = {depot_id: defaultdict(list) for depot_id in depots.keys()}  # key: time_slot (arr/dep), value: vehicles
+    RS_queues = {
+        depot_id: defaultdict(list) for depot_id in depots.keys()
+    }  # key: time_slot (arr/dep), value: list(line_id, first_serv_of_vehicle)
     # model inputs
     K = []  # (first service index, line_id) of each vehicle
     for timetable in timetable_net.values():
-        K += [(timetable.services[i].line_id, i) for i in timetable.turn_back_connections.keys()]
+        K += [
+            (timetable.services[i].line_id, i)
+            for i in timetable.turn_back_connections.keys()
+        ]
 
     for line_id, first_serv_id in K:
         line = lines[line_id]
@@ -776,15 +974,30 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
         enter_depot = depots[str(line.stations_conn_depots[last_serv_last_station])]
         key1 = (int(line_id), first_serv_first_station)
         key2 = (int(line_id), last_serv_last_station)
-        leave_runtime = leave_depot['runtime'][key1] if key1 in leave_depot['runtime'] else leave_depot['runtime'][
-            int(line_id), 2 * len(line.up_stations) - first_serv_first_station - 1]
-        enter_runtime = enter_depot['runtime'][key2] if key2 in enter_depot['runtime'] else enter_depot['runtime'][
-            int(line_id), 2 * len(line.up_stations) - last_serv_last_station - 1]
-        RS_queues[leave_depot['id']][first_service.arrs[0] - leave_runtime]. \
-            append((int(line_id), first_service.id))
-        RS_queues[enter_depot['id']][last_service.deps[-1] + enter_runtime]. \
-            append((int(line_id), last_service.id))
+        leave_runtime = (
+            leave_depot.runtime[key1]
+            if key1 in leave_depot.runtime
+            else leave_depot.runtime[
+                int(line_id), 2 * len(line.up_stations) - first_serv_first_station - 1
+            ]
+        )
+        enter_runtime = (
+            enter_depot.runtime[key2]
+            if key2 in enter_depot.runtime
+            else enter_depot.runtime[
+                int(line_id), 2 * len(line.up_stations) - last_serv_last_station - 1
+            ]
+        )
+        RS_queues[leave_depot.id][first_service.arrs[0] - leave_runtime].append(
+            (int(line_id), first_service.id)
+        )
+        RS_queues[enter_depot.id][last_service.deps[-1] + enter_runtime].append(
+            (int(line_id), last_service.id)
+        )
 
     for depot_id in RS_queues.keys():
-        RS_queues[depot_id] = defaultdict(RS_queues[depot_id], sorted(RS_queues[depot_id].items()))
+        RS_queues[depot_id] = dict(
+            sorted(RS_queues[depot_id].items(), key=lambda item: item[0])
+        )
+
         sds = 0

@@ -2,7 +2,6 @@ class Timetable:
     """
     class for the timetable
     """
-
     def __init__(self, line_id):
         self.services = {}
         self.up_services = []
