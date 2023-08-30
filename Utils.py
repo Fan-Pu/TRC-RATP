@@ -708,6 +708,7 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
 
         # cancel invalid services that start or terminate at station without connections to depots
         to_delete = []
+        to_replace = []  # new and delete
         for first_serv_id, service_queue in timetable.turn_back_connections.items():
             # forward check
             forward_check_pass = False
@@ -744,13 +745,16 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                         service.last_service = service_queue[-1]
                         if serv_id == service_queue[-1]:
                             service.next_service = -1
-
                 if service_queue[0] != first_serv_id:  # update the key
-                    timetable.turn_back_connections[service_queue[0]] = service_queue
-                    del timetable.turn_back_connections[first_serv_id]
+                    to_replace.append([service_queue[0], first_serv_id])
+                    # timetable.turn_back_connections[service_queue[0]] = service_queue
+                    # del timetable.turn_back_connections[first_serv_id]
 
         for key in to_delete:
             del timetable.turn_back_connections[key]
+        for key_new, key_delete in to_replace:
+            timetable.turn_back_connections[key_new] = timetable.turn_back_connections[key_delete]
+            del timetable.turn_back_connections[key_delete]
 
 
 def gen_rs_allocation_plan(timetable_net, lines, depots):
