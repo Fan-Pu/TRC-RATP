@@ -133,7 +133,7 @@ def read_depots(folder_path):
                     depot['capacity'] = int(capacity)
                 depot['conn_lines'].append(int(conn_line_id))
                 depot['conn_stations'][int(conn_line_id)] = int(conn_station_id)
-                depot['runtime'][(int(conn_line_id), int(conn_station_id))] = runtime
+                depot['runtime'][(int(conn_line_id), int(conn_station_id))] = int(runtime)
         depots[depot_id] = depot
 
     return depots
@@ -418,7 +418,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
-        gen_vehicle_circulation(timetable_net, lines)
+        gen_vehicle_circulation(timetable_net, lines, depots)
 
         # generate rolling stock allocation plan
         gen_rs_allocation_plan(timetable_net, lines, depots)
@@ -636,7 +636,7 @@ def calculate_service_quality(timetable_net, lines):
     return service_quality / len(lines)
 
 
-def gen_vehicle_circulation(timetable_net, lines):
+def gen_vehicle_circulation(timetable_net, lines, depots):
     for l, timetable in timetable_net.items():
         line = lines[l]
         services_queues = {route[-1]: {'from': [], 'to': []} for route in line.routes}
@@ -691,16 +691,66 @@ def gen_vehicle_circulation(timetable_net, lines):
             if service.front_service == -1:
                 timetable.turn_back_connections[service_id] = [service_id]
         for first_serv_id in timetable.turn_back_connections.keys():
-            last_serv_id = -1
             temp_service = timetable.services[first_serv_id]
             while temp_service.next_service != -1:
                 if temp_service.id != first_serv_id:
                     timetable.turn_back_connections[first_serv_id].append(temp_service.id)
                 temp_service = timetable.services[temp_service.next_service]
             last_serv_id = temp_service.id
+            if temp_service.id != first_serv_id:
+                timetable.turn_back_connections[first_serv_id].append(temp_service.id)
+
             for serv_id in timetable.turn_back_connections[first_serv_id]:
                 service = timetable.services[serv_id]
                 service.last_service = last_serv_id
+                if service.first_service != -1:
+                    service.first_service = first_serv_id
+
+        # cancel invalid services that start or terminate at station without connections to depots
+        to_delete = []
+        for first_serv_id, service_queue in timetable.turn_back_connections.items():
+            # forward check
+            forward_check_pass = False
+            while len(service_queue) > 0 and not forward_check_pass:
+                first_service = timetable.services[service_queue[0]]
+                first_service.first_service = first_service.id
+                first_serv_first_station = first_service.route[0]
+                # if this station does not connect to this depot, cancel this service
+                if first_serv_first_station not in line.stations_conn_depots:
+                    del timetable.services[service_queue[0]]
+                    del service_queue[0]
+                else:
+                    forward_check_pass = True
+            # backward check
+            backward_check_pass = False
+            last_service_altered = False
+            while len(service_queue) > 0 and not backward_check_pass:
+                last_service = timetable.services[service_queue[-1]]
+                last_serv_last_station = last_service.route[-1]
+                # if this station does not connect to this depot, cancel this service
+                if last_serv_last_station not in line.stations_conn_depots:
+                    del timetable.services[service_queue[-1]]
+                    del service_queue[-1]
+                    last_service_altered = True
+                else:
+                    backward_check_pass = True
+
+            if len(service_queue) == 0:
+                to_delete.append(first_serv_id)
+            else:
+                if last_service_altered:
+                    for serv_id in service_queue:
+                        service = timetable.services[serv_id]
+                        service.last_service = service_queue[-1]
+                        if serv_id == service_queue[-1]:
+                            service.next_service = -1
+
+                if service_queue[0] != first_serv_id:  # update the key
+                    timetable.turn_back_connections[service_queue[0]] = service_queue
+                    del timetable.turn_back_connections[first_serv_id]
+
+        for key in to_delete:
+            del timetable.turn_back_connections[key]
 
 
 def gen_rs_allocation_plan(timetable_net, lines, depots):
@@ -720,8 +770,17 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
         last_serv_last_station = last_service.route[-1]
         leave_depot = depots[str(line.stations_conn_depots[first_serv_first_station])]
         enter_depot = depots[str(line.stations_conn_depots[last_serv_last_station])]
-        leave_runtime = leave_depot['runtime'][int(line_id), first_serv_first_station]
-        enter_runtime = enter_depot['runtime'][int(line_id), last_serv_last_station]
-        RS_queues[leave_depot['id']][first_service.arrs[0] - leave_runtime].append((int(line_id), first_service.id))
-        RS_queues[enter_depot['id']][last_service.deps[-1] + enter_runtime].append((int(line_id), last_service.id))
-        kkkh=0
+        key1 = (int(line_id), first_serv_first_station)
+        key2 = (int(line_id), last_serv_last_station)
+        leave_runtime = leave_depot['runtime'][key1] if key1 in leave_depot['runtime'] else leave_depot['runtime'][
+            int(line_id), 2 * len(line.up_stations) - first_serv_first_station - 1]
+        enter_runtime = enter_depot['runtime'][key2] if key2 in enter_depot['runtime'] else enter_depot['runtime'][
+            int(line_id), 2 * len(line.up_stations) - last_serv_last_station - 1]
+        RS_queues[leave_depot['id']][first_service.arrs[0] - leave_runtime]. \
+            append((int(line_id), first_service.id))
+        RS_queues[enter_depot['id']][last_service.deps[-1] + enter_runtime]. \
+            append((int(line_id), last_service.id))
+
+    for depot_id in RS_queues.keys():
+        RS_queues[depot_id] = defaultdict(RS_queues[depot_id], sorted(RS_queues[depot_id].items()))
+        sds = 0
