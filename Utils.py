@@ -136,7 +136,7 @@ def read_lines(folder_path):
     return lines
 
 
-def read_depots(folder_path):
+def read_depots(folder_path, lines):
     csv_files = [
         file
         for file in os.listdir(folder_path)
@@ -161,7 +161,9 @@ def read_depots(folder_path):
                 if capacity != "":
                     depot.capacity = int(capacity)
                 depot.conn_lines.append(int(conn_line_id))
-                depot.conn_stations[int(conn_line_id)] = int(conn_station_id)
+                depot.conn_stations[int(conn_line_id)].append(int(conn_station_id))
+                reverse_station_id = 2 * len(lines[conn_line_id].up_stations) - int(conn_station_id) - 1
+                depot.conn_stations[int(conn_line_id)].append(reverse_station_id)
                 depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(
                     runtime
                 )
@@ -996,8 +998,25 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
         )
 
     for depot_id in RS_queues.keys():
+        current_flow = 0
+        depot = depots[depot_id]
         RS_queues[depot_id] = dict(
             sorted(RS_queues[depot_id].items(), key=lambda item: item[0])
         )
+        for time_slot, vehicle_queue in RS_queues[depot_id].items():
+            # determine whether each vehicle is arrival or departure
+            for line_id, first_serv_id in vehicle_queue:
+                first_service = timetable_net[str(line_id)].services[first_serv_id]
+                last_service = timetable_net[str(line_id)].services[first_service.last_service]
+                first_serv_first_station = first_service.route[0]
+                last_serv_last_station = last_service.route[-1]
+                inflow_num = outflow_num = 0
+                # this vehicle departs from this depot
+                if first_serv_first_station in depot.conn_stations[line_id]:
+                    outflow_num += 1
+                elif last_serv_last_station in depot.conn_stations[line_id]:
+                    inflow_num += 1
+                current_flow += outflow_num - inflow_num
+                depot.maximum_flow = max(depot.maximum_flow, current_flow)
 
-        sds = 0
+    sds = 0
