@@ -2,6 +2,7 @@ class Timetable:
     """
     class for the timetable
     """
+
     def __init__(self, line_id):
         self.services = {}
         self.up_services = []
@@ -19,3 +20,4 @@ class Timetable:
         # self.p_transfer = {}  # transfer passengers, key: service_id
 
         self.turn_back_connections = {}  # key: first_service_of_vehicle, value: consecutive_services_of_vehicle
+        self.services_queues = {}

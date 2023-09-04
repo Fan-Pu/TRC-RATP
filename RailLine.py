@@ -4,6 +4,9 @@ class RailLine:
         self.line_name = row[0]
         self.line_id = row[1]
         self.routes = []  # available train routes
+        self.up_routes = []
+        self.dn_routes = []
+
         self.up_stations = []  # up direction stations
         self.dn_stations = []  # down direction stations
         self.runtimes = {}  # section runtimes

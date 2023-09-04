@@ -1,17 +1,18 @@
+import csv
 import math
 import os
-import time
+import random
 import statistics
-from RailLine import *
+import time
+from collections import OrderedDict
+
+import pandas as pd
+
 from Depot import *
 from PassengerFlow import *
+from RailLine import *
 from Timetable import *
 from TrainService import *
-import pandas as pd
-import random
-import csv
-from collections import OrderedDict, defaultdict
-import gurobipy as gp
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -130,8 +131,10 @@ def read_lines(folder_path):
     for key, line in lines.items():
         # up direction full route
         line.routes.append(line.up_stations)
+        line.up_routes.append(line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1]))
         # down direction full route
         line.routes.append(line.dn_stations)
+        line.dn_routes.append(line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1]))
 
     return lines
 
@@ -314,6 +317,11 @@ def set_line_short_routes(lines, passenger_flows):
         if is_flow_unbalance:
             # generate short routes
             line.routes += new_short_routes
+            route_runtime = line.get_runtime(new_short_routes[0], new_short_routes[-1])
+            if new_short_routes[0] <= line.up_stations[-1]:
+                line.up_routes += (new_short_routes, route_runtime)
+            else:
+                line.dn_routes += (new_short_routes, route_runtime)
 
 
 def read_arrival_rates(folder_path, lines, passenger_flows):
@@ -448,8 +456,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
     timetable_pool = []
     weights_dict = {
-        (l, n): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N
-    }  # key l,n
+        (l, n, d): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N for d in [0, 1]
+    }  # key l,n,d
     for i in range(0, iter_max):
         print("iter: " + str(i))
         # generate a timetable for the network
@@ -461,22 +469,58 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 arr_slots[l, sta_id] = 0
 
         service_nums = {l: 0 for l in lines.keys()}
+        depots_net_flow = {i: 0 for i in depots.keys()}
+        last_hetero_route = {}  # key: (di,dj) value: (line,service_id)
 
         # for each time window
         for n in N:
             is_in_peak_hour = (
                 True
-                if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1])
-                   or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1])
+                if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1]) or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1])
                 else False
             )
             time_span = [k for k in range(n, n + TIME_PERIOD)]
             for l, line in lines.items():  # for each line
-                # select a fixed headway for this line within this window
-                headway = roulette_selection(HEADWAY_POOL, weights_dict[l, n])
                 timetable = timetable_net[l]
-
+                timetable.services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
                 start_time_secs = time_span[0] * 60
+
+                # upstream
+                # select a fixed headway for this line within this window
+                headway = roulette_selection(HEADWAY_POOL, weights_dict[l, n, 0])
+                route_pool = []
+                for route, runtime in line.up_routes:
+                    # remain time is not sufficient for this route
+                    if start_time_secs + runtime > END_TIME * 60:
+                        continue
+
+                    from_depot_id = line.stations_conn_depots[route[0]] if \
+                        route[0] in line.stations_conn_depots.keyset() else -1
+                    to_depot_id = line.stations_conn_depots[route[-1]] if \
+                        route[-1] in line.stations_conn_depots.keyset() else -1
+
+                    # each terminal station of this route connect with depot
+                    if from_depot_id != -1 and to_depot_id != -1:
+                        # the route is valid to be scheduled
+                        if depots_net_flow[from_depot_id] < depots[from_depot_id].capacity and \
+                                -depots_net_flow[to_depot_id] < depots[to_depot_id].capacity:
+                            route_pool.append(route)
+                    elif from_depot_id != 1:
+                        # check if another terminal station is available for turn-back (has a front reverse service)
+                        turnback_sta_id = route[-1]
+                        front_services = timetable.services_queues[turnback_sta_id]['from']
+                        front_service = None
+                        for serv_id in front_services:
+                            service = timetable.services[serv_id]
+                            if service.deps[-1]  # 判断是否满足折返时间要求
+
+                    else:
+                        sdds = 0
+
+                # downstream
+                # select a fixed headway for this line within this window
+                headway = roulette_selection(HEADWAY_POOL, weights_dict[l, n, 1])
+
                 need_break = False
                 while not need_break:
                     for route in line.routes:
@@ -509,9 +553,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         ):
                             need_break = True
                             break
-
-                        if l == "0" and route[-1] == 21:
-                            iisds = 0
 
                         service_nums[l] += 1
                         timetable.services[service.id] = service
@@ -571,10 +612,10 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
-        gen_vehicle_circulation(timetable_net, lines, depots)
+        # gen_vehicle_circulation(timetable_net, lines, depots)
 
         # generate rolling stock allocation plan
-        gen_rs_allocation_plan(timetable_net, lines, depots)
+        # gen_rs_allocation_plan(timetable_net, lines, depots)
 
         timetable_pool.append((timetable_net, avg_serv_quality))
 
