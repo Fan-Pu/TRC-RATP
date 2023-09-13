@@ -470,7 +470,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         service_nums = {l: 0 for l in lines.keys()}
         depots_net_flow = {i: 0 for i in depots.keys()}
-        last_hetero_route = {}  # key: (di,dj) value: (line,service_id) 需不需要保留
+        last_routes = {(line_id, dir_id): (None, None) for line_id in lines.keys()
+                       for dir_id in [0, 1]}  # key: (line_id,direction) value: (sta_start,sta_end)
 
         # for each time window
         for n in N:
@@ -495,8 +496,30 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 dn_route_pool = process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
                                                depots_net_flow, timetable, headway_dn)
 
+                # select route: if full-length and short-length routes are all available
+                # (1) peak hour: alternatively select these routes
+                # (2) off-peak hour: only select full-length route
+                # if only one route: select this route
+                # if no available routes: skip
+
                 # select route from upstream available routes
                 if len(up_route_pool) > 0:
+                    route = up_route_pool[0] if len(up_route_pool) == 1 else None
+                    if len(up_route_pool) > 1:
+                        # alternatively select
+                        if is_in_peak_hour:
+                            route = up_route_pool[0] if \
+                                (last_routes[line.line_id, 0] != (up_route_pool[0][0], up_route_pool[0][-1])) \
+                                else up_route_pool[-1]
+                        # only select full-length route
+                        else:
+                            route = up_route_pool[0] if \
+                                (up_route_pool[0][0], up_route_pool[0][-1]) == (
+                                    line.up_stations[0], line.up_stations[-1]) else up_route_pool[-1]
+                    else:
+                        route = up_route_pool[0]
+
+
 
                 # select route from downstream available routes
                 if len(dn_route_pool) > 0:
