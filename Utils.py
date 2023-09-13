@@ -470,7 +470,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         service_nums = {l: 0 for l in lines.keys()}
         depots_net_flow = {i: 0 for i in depots.keys()}
-        last_hetero_route = {}  # key: (di,dj) value: (line,service_id)
+        last_hetero_route = {}  # key: (di,dj) value: (line,service_id) 需不需要保留
 
         # for each time window
         for n in N:
@@ -482,17 +482,24 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 timetable = timetable_net[l]
                 timetable.services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
                 start_time_secs = time_span[0] * 60
+                headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
+                headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
 
                 # upstream
                 # select a fixed headway for this line within this window
-                route_pool = []
-                route_pool += process_routes(line, depots, line.up_routes, weights_dict, n, 0, arr_slots,
-                                             depots_net_flow, timetable)
+                up_route_pool = process_routes(line, depots, line.up_routes, weights_dict, n, 0, arr_slots,
+                                               depots_net_flow, timetable, headway_up)
 
                 # downstream
                 # select a fixed headway for this line within this window
-                route_pool += process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
-                                             depots_net_flow, timetable)
+                dn_route_pool = process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
+                                               depots_net_flow, timetable, headway_dn)
+
+                # select route from upstream available routes
+                if len(up_route_pool) > 0:
+
+                # select route from downstream available routes
+                if len(dn_route_pool) > 0:
 
                 need_break = False
                 while not need_break:
@@ -786,9 +793,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
                         transfer_pas += value
                         transfer_volume_points[temp_key] = i + 1
 
-                wait_passengers = (
-                        remaining_pas + arriving_pas + math.floor(transfer_pas)
-                )
+                wait_passengers = remaining_pas + arriving_pas + math.floor(transfer_pas)
                 passenger_in_train = (
                     0
                     if station_id == service.route[0]
@@ -1036,8 +1041,7 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
     sds = 0
 
 
-def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, depots_net_flow, timetable):
-    headway = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, dir_idx])
+def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, depots_net_flow, timetable, headway):
     route_pool = []
 
     for route, runtime in routes:
