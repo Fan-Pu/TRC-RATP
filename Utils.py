@@ -490,8 +490,10 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 headway = roulette_selection(HEADWAY_POOL, weights_dict[l, n, 0])
                 route_pool = []
                 for route, runtime in line.up_routes:
+                    last_arr_time_first_station = arr_slots[(line.line_id, route[0])]
+                    desired_arr_time = last_arr_time_first_station + headway
                     # remain time is not sufficient for this route
-                    if start_time_secs + runtime > END_TIME * 60:
+                    if last_arr_time_first_station + headway + runtime > END_TIME * 60:
                         continue
 
                     from_depot_id = line.stations_conn_depots[route[0]] if \
@@ -505,17 +507,39 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         if depots_net_flow[from_depot_id] < depots[from_depot_id].capacity and \
                                 -depots_net_flow[to_depot_id] < depots[to_depot_id].capacity:
                             route_pool.append(route)
-                    elif from_depot_id != 1:
+                    # do not have "from" depot
+                    elif from_depot_id == -1 and to_depot_id != -1:
                         # check if another terminal station is available for turn-back (has a front reverse service)
-                        turnback_sta_id = route[-1]
+                        turnback_sta_id = route[0]
                         front_services = timetable.services_queues[turnback_sta_id]['from']
                         front_service = None
-                        for serv_id in front_services:
+                        for serv_id in reversed(front_services):
                             service = timetable.services[serv_id]
-                            if service.deps[-1]  # 判断是否满足折返时间要求
-
-                    else:
-                        sdds = 0
+                            if TURNBACK_MIN_SECS <= service.deps[-1] - desired_arr_time \
+                                    <= TURNBACK_MAX_SECS:  # 满足折返时间要求
+                                front_service = service
+                                break
+                            elif TURNBACK_MIN_SECS > service.deps[-1] - desired_arr_time:
+                                break
+                        if front_service is not None:
+                            route_pool.append(route)
+                    # do not have "to" depot
+                    elif to_depot_id == -1 and from_depot_id != -1:
+                        # check if another terminal station is available for turn-back (has a front reverse service)
+                        turnback_sta_id = route[-1]
+                        behind_services = timetable.services_queues[turnback_sta_id]['to']
+                        behind_service = None
+                        for serv_id in reversed(behind_services):
+                            service = timetable.services[serv_id]
+                            desired_last_dep_time = desired_arr_time + runtime + line.dwells[turnback_sta_id]
+                            if TURNBACK_MIN_SECS <= service.arrs[0] - desired_last_dep_time \
+                                    <= TURNBACK_MAX_SECS:  # 满足折返时间要求
+                                behind_service = service
+                                break
+                            elif TURNBACK_MIN_SECS > service.arrs[0] - desired_last_dep_time:
+                                break
+                        if behind_service is not None:
+                            route_pool.append(route)
 
                 # downstream
                 # select a fixed headway for this line within this window
