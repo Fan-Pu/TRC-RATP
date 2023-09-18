@@ -131,10 +131,10 @@ def read_lines(folder_path):
     for key, line in lines.items():
         # up direction full route
         line.routes.append(line.up_stations)
-        line.up_routes.append(line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1]))
+        line.up_routes.append((line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1])))
         # down direction full route
         line.routes.append(line.dn_stations)
-        line.dn_routes.append(line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1]))
+        line.dn_routes.append((line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1])))
 
     return lines
 
@@ -222,9 +222,7 @@ def set_line_short_routes(lines, passenger_flows):
             continue
         flow_data = passenger_flows.sectional_flows[line.line_id]
         is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
-        new_short_routes = (
-            []
-        )  # short routes need to be added if is_flow_unbalance is True
+        new_short_routes = ([])  # short routes need to be added if is_flow_unbalance is True
 
         for window in PEAK_HOURS:
             if is_flow_unbalance:
@@ -317,11 +315,12 @@ def set_line_short_routes(lines, passenger_flows):
         if is_flow_unbalance:
             # generate short routes
             line.routes += new_short_routes
-            route_runtime = line.get_runtime(new_short_routes[0], new_short_routes[-1])
-            if new_short_routes[0] <= line.up_stations[-1]:
-                line.up_routes += (new_short_routes, route_runtime)
-            else:
-                line.dn_routes += (new_short_routes, route_runtime)
+            for short_route in new_short_routes:
+                route_runtime = line.get_runtime(short_route[0], short_route[-1])
+                if short_route[0] <= line.up_stations[-1]:
+                    line.up_routes.append((short_route, route_runtime))
+                else:
+                    line.dn_routes.append((short_route, route_runtime))
 
 
 def read_arrival_rates(folder_path, lines, passenger_flows):
@@ -481,11 +480,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
             time_span = [k for k in range(n, n + TIME_PERIOD)]
             for l, line in lines.items():  # for each line
                 timetable = timetable_net[l]
-                timetable.services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
+                for route in line.routes:
+                    for sta_id in [route[0], route[-1]]:
+                        timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
                 start_time_secs = time_span[0] * 60
                 headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
                 headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
 
+                ssa = 0
                 # add upstream and downstream services
                 while True:
                     added_servs = []
@@ -522,13 +524,16 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         added_servs.append(service)
                         last_routes[line.line_id, 0] = (route[0], route[-1])
 
+                    if ssa == 295:
+                        ssdad = 0
                     # downstream ********************
                     dn_route_pool = process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
                                                    depots_net_flow, timetable, headway_dn)
+                    if len(dn_route_pool) == 0:
+                        ssd = 1
                     # select route from downstream available routes
                     route = None
                     if len(dn_route_pool) > 0:
-                        route = dn_route_pool[0] if len(dn_route_pool) == 1 else None
                         if len(dn_route_pool) > 1:
                             # alternatively select
                             if is_in_peak_hour:
@@ -549,6 +554,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         added_servs.append(service)
                         last_routes[line.line_id, 1] = (route[0], route[-1])
 
+                    ssa += 1
                     if added_servs == 0:
                         break
 
@@ -1026,8 +1032,8 @@ def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, de
         # each terminal station of this route connect with depot
         if from_depot_id != -1 and to_depot_id != -1:
             # the route is valid to be scheduled
-            if depots_net_flow[from_depot_id] < depots[from_depot_id].capacity and \
-                    -depots_net_flow[to_depot_id] < depots[to_depot_id].capacity:
+            if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity and \
+                    -depots_net_flow[str(to_depot_id)] < depots[str(to_depot_id)].capacity:
                 route_pool.append(route)
         # do not have "from" depot
         elif from_depot_id == -1 and to_depot_id != -1:
