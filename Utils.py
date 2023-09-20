@@ -491,9 +491,12 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 # add upstream and downstream services
                 while True:
                     added_servs = []
+                    if l in {'1','3','4','5','6','7'}:
+                        ssda=0
                     # upstream *******************
-                    up_route_pool = process_routes(line, depots, line.up_routes, weights_dict, n, 0, arr_slots,
-                                                   depots_net_flow, timetable, headway_up, time_span)
+                    up_route_pool,dedicated_turn_back_servs = (
+                        process_routes(line, depots, line.up_routes, weights_dict, n, 0, arr_slots,
+                                                   depots_net_flow, timetable, headway_up, time_span))
                     # select route: if full-length and short-length routes are all available
                     # (1) peak hour: alternatively select these routes
                     # (2) off-peak hour: only select full-length route
@@ -525,10 +528,18 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         if valid:
                             added_servs.append(service)
                             last_routes[line.line_id, 0] = (route[0], route[-1])
+                            # update turn-back connections
+                            if dedicated_turn_back_servs.get(route):
+                                dir,serv_id=dedicated_turn_back_servs[route]
+                                if dir=='from':
+                                    service.front_service=serv_id
+                                else:
+                                    service.next_service=serv_id
 
                     # downstream ********************
-                    dn_route_pool = process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
-                                                   depots_net_flow, timetable, headway_dn, time_span)
+                    dn_route_pool,dedicated_turn_back_servs = (
+                        process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
+                                                   depots_net_flow, timetable, headway_dn, time_span))
 
                     # select route from downstream available routes
                     route = None
@@ -554,6 +565,13 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         if valid:
                             added_servs.append(service)
                             last_routes[line.line_id, 1] = (route[0], route[-1])
+                            # update turn-back connections
+                            if dedicated_turn_back_servs.get(route):
+                                dir, serv_id = dedicated_turn_back_servs[route]
+                                if dir == 'from':
+                                    service.front_service = serv_id
+                                else:
+                                    service.next_service = serv_id
 
                     ssa += 1
                     if len(added_servs) == 0:
@@ -561,7 +579,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         # simulate passenger flows and calculate service quality
         start_time = time.time()
-        passenger_flow_simulate(timetable_net, lines, passenger_flows)
+        # passenger_flow_simulate(timetable_net, lines, passenger_flows)
         # avg_serv_quality = calculate_service_quality(timetable_net, lines)
         avg_serv_quality = 0.5
         end_time = time.time()
@@ -833,10 +851,7 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
             for turn_back_platform in services_queues.keys():
                 if service.route[-1] == turn_back_platform:
                     services_queues[turn_back_platform]["from"].append(service.id)
-                if (
-                        service.route[0]
-                        == 2 * len(line.up_stations) - 1 - turn_back_platform
-                ):
+                if service.route[0]== 2 * len(line.up_stations) - 1 - turn_back_platform:
                     services_queues[turn_back_platform]["to"].append(service.id)
         # start linking services
         for turn_back_platform in services_queues.keys():
@@ -1025,6 +1040,7 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
 def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, depots_net_flow,
                    timetable, headway, timespan):
     route_pool = []
+    dedicated_turn_back_servs={}
 
     end_time_secs = timespan[-1] * 60
 
@@ -1054,28 +1070,23 @@ def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, de
             front_services = timetable.services_queues[turnback_sta_id]['from']
             for serv_id in reversed(front_services):
                 service = timetable.services[serv_id]
+                # this service may have been connected by other services
+                if service.next_service!=-1:
+                    continue
                 # meeting the requirement of turnback time
                 if TURNBACK_MIN_SECS <= service.deps[-1] - desired_arr_time <= TURNBACK_MAX_SECS:
                     if route not in route_pool:
                         route_pool.append(route)
+                        dedicated_turn_back_servs[route]=(serv_id,'from')
                 elif TURNBACK_MIN_SECS > service.deps[-1] - desired_arr_time:
                     break
         # do not have "to" depot
         elif to_depot_id == -1 and from_depot_id != -1:
-            # check if another terminal station is available for turn-back (has a front reverse service)
-            turnback_sta_id = route[-1]
-            behind_services = timetable.services_queues[turnback_sta_id]['to']
-            for serv_id in reversed(behind_services):
-                service = timetable.services[serv_id]
-                desired_last_dep_time = desired_arr_time + runtime + line.dwells[turnback_sta_id]
-                # meeting the requirement of turnback time
-                if TURNBACK_MIN_SECS <= service.arrs[0] - desired_last_dep_time <= TURNBACK_MAX_SECS:
-                    if route not in route_pool:
-                        route_pool.append(route)
-                elif TURNBACK_MIN_SECS > service.arrs[0] - desired_last_dep_time:
-                    break
+            # the route is valid to be scheduled
+            if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity:
+                route_pool.append(route)
 
-    return route_pool
+    return route_pool,dedicated_turn_back_servs
 
 
 def construct_service(route, service_nums, dir_id, line, first_arr_time, time_span, timetable, arr_slots):
