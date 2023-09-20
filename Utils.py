@@ -493,7 +493,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                     added_servs = []
                     # upstream *******************
                     up_route_pool = process_routes(line, depots, line.up_routes, weights_dict, n, 0, arr_slots,
-                                                   depots_net_flow, timetable, headway_up)
+                                                   depots_net_flow, timetable, headway_up, time_span)
                     # select route: if full-length and short-length routes are all available
                     # (1) peak hour: alternatively select these routes
                     # (2) off-peak hour: only select full-length route
@@ -517,20 +517,19 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                         line.up_stations[0], line.up_stations[-1]) else up_route_pool[-1]
                         else:
                             route = up_route_pool[0]
-                    first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
-                    service, valid = construct_service(route, service_nums, 0, line, first_arr_time, time_span,
-                                                       timetable, arr_slots)
-                    if valid:
-                        added_servs.append(service)
-                        last_routes[line.line_id, 0] = (route[0], route[-1])
 
-                    if ssa == 295:
-                        ssdad = 0
+                    if route is not None:
+                        first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
+                        service, valid = construct_service(route, service_nums, 0, line, first_arr_time, time_span,
+                                                           timetable, arr_slots)
+                        if valid:
+                            added_servs.append(service)
+                            last_routes[line.line_id, 0] = (route[0], route[-1])
+
                     # downstream ********************
                     dn_route_pool = process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
-                                                   depots_net_flow, timetable, headway_dn)
-                    if len(dn_route_pool) == 0:
-                        ssd = 1
+                                                   depots_net_flow, timetable, headway_dn, time_span)
+
                     # select route from downstream available routes
                     route = None
                     if len(dn_route_pool) > 0:
@@ -547,21 +546,24 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                         line.dn_stations[0], line.dn_stations[-1]) else dn_route_pool[-1]
                         else:
                             route = dn_route_pool[0]
-                    first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
-                    service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
-                                                       timetable, arr_slots)
-                    if valid:
-                        added_servs.append(service)
-                        last_routes[line.line_id, 1] = (route[0], route[-1])
+
+                    if route is not None:
+                        first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
+                        service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
+                                                           timetable, arr_slots)
+                        if valid:
+                            added_servs.append(service)
+                            last_routes[line.line_id, 1] = (route[0], route[-1])
 
                     ssa += 1
-                    if added_servs == 0:
+                    if len(added_servs) == 0:
                         break
 
         # simulate passenger flows and calculate service quality
         start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
-        avg_serv_quality = calculate_service_quality(timetable_net, lines)
+        # avg_serv_quality = calculate_service_quality(timetable_net, lines)
+        avg_serv_quality = 0.5
         end_time = time.time()
         execution_time = end_time - start_time
         print(f"程序执行时间: {execution_time:.4f} 秒")
@@ -637,10 +639,14 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
     for l, timetable in timetable_net.items():
         for service_id, service in timetable.services.items():
             for t in service.arrs:
+                if t == 86400:
+                    ssda = 0
                 arrive_slots[t].append((l, service_id))
                 if "arr" not in core_slots[t]:
                     core_slots[t].append("arr")
             for t in service.deps:
+                if t == 86400:
+                    ssda = 0
                 depart_slots[t].append((l, service_id))
                 if "dep" not in core_slots[t]:
                     core_slots[t].append("dep")
@@ -666,7 +672,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
     # simulate passenger flows
     for t, action_list in core_slots.items():  # t is starting from START_TIME
-        t_minute = round((int(t) - START_TIME * 60) / 60)
+        t_minute = math.floor((int(t) - START_TIME * 60) / 60)
         # this slot contains arrivals
         if "arr" in action_list:
             # calculate the alight passengers and transfer passengers
@@ -1016,14 +1022,20 @@ def gen_rs_allocation_plan(timetable_net, lines, depots):
     sds = 0
 
 
-def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, depots_net_flow, timetable, headway):
+def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, depots_net_flow,
+                   timetable, headway, timespan):
     route_pool = []
+
+    end_time_secs = timespan[-1] * 60
 
     for route, runtime in routes:
         last_arr_time_first_station = arr_slots[(line.line_id, route[0])]
         desired_arr_time = last_arr_time_first_station + headway
+        # if the desired_arr_time exceed the time window
+        if desired_arr_time >= end_time_secs:
+            continue
         # remain time is not sufficient for this route
-        if last_arr_time_first_station + headway + runtime > END_TIME * 60:
+        if last_arr_time_first_station + headway + runtime >= END_TIME * 60:
             continue
 
         from_depot_id = line.stations_conn_depots.get(route[0], -1)
@@ -1085,31 +1097,34 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
     is_valid = True
     if service.arrs[0] >= time_span[-1] * 60 or service.deps[-1] >= END_TIME * 60:
         is_valid = False
-
-    service_nums[line.line_id] += 1
-    timetable.services[service.id] = service
-
-    if dir_id == 0:
-        timetable.up_services.append(service.id)
     else:
-        timetable.dn_services.append(service.id)
+        service_nums[line.line_id] += 1
+        timetable.services[service.id] = service
 
-    # update the last arrive time (arr_slots)
-    for k in range(0, len(service.route)):
-        arr_slots[line.line_id, service.route[k]] = service.arrs[k]
-    min_sta_id = line.up_stations[0] if service.direction == 0 else line.dn_stations[0]
-    max_sta_id = line.up_stations[-1] if service.direction == 0 else line.dn_stations[-1]
-    for sta_id in range(service.route[0] - 1, min_sta_id - 1, -1):
-        if sta_id == service.route[0] - 1:
-            arr_slots[line.line_id, sta_id] = service.arrs[0] - line.runtimes[sta_id, sta_id + 1] - line.dwells[sta_id]
+        if dir_id == 0:
+            timetable.up_services.append(service.id)
         else:
-            arr_slots[line.line_id, sta_id] = arr_slots[line.line_id, sta_id + 1] - \
-                                              line.runtimes[sta_id, sta_id + 1] - line.dwells[sta_id]
-    for sta_id in range(service.route[-1] + 1, max_sta_id + 1):
-        if sta_id == service.route[-1] + 1:
-            arr_slots[line.line_id, sta_id] = service.arrs[-1] + line.runtimes[sta_id - 1, sta_id] + \
-                                              line.dwells[sta_id - 1]
-        else:
-            arr_slots[line.line_id, sta_id] = arr_slots[line.line_id, sta_id - 1] + line.runtimes[sta_id - 1, sta_id] + \
-                                              line.dwells[sta_id - 1]
+            timetable.dn_services.append(service.id)
+
+        # update the last arrive time (arr_slots)
+        for k in range(0, len(service.route)):
+            arr_slots[line.line_id, service.route[k]] = service.arrs[k]
+        min_sta_id = line.up_stations[0] if service.direction == 0 else line.dn_stations[0]
+        max_sta_id = line.up_stations[-1] if service.direction == 0 else line.dn_stations[-1]
+        for sta_id in range(service.route[0] - 1, min_sta_id - 1, -1):
+            if sta_id == service.route[0] - 1:
+                arr_slots[line.line_id, sta_id] = service.arrs[0] - line.runtimes[sta_id, sta_id + 1] - line.dwells[
+                    sta_id]
+            else:
+                arr_slots[line.line_id, sta_id] = arr_slots[line.line_id, sta_id + 1] - \
+                                                  line.runtimes[sta_id, sta_id + 1] - line.dwells[sta_id]
+        for sta_id in range(service.route[-1] + 1, max_sta_id + 1):
+            if sta_id == service.route[-1] + 1:
+                arr_slots[line.line_id, sta_id] = service.arrs[-1] + line.runtimes[sta_id - 1, sta_id] + \
+                                                  line.dwells[sta_id - 1]
+            else:
+                arr_slots[line.line_id, sta_id] = arr_slots[line.line_id, sta_id - 1] + line.runtimes[
+                    sta_id - 1, sta_id] + \
+                                                  line.dwells[sta_id - 1]
+
     return service, is_valid
