@@ -478,8 +478,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 True if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1]) or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1])
                 else False)
             time_span = [k for k in range(n, n + TIME_PERIOD)]
-            if time_span[-1] * 60 > 20940:
-                ssd = 0
+
             for l, line in lines.items():  # for each line
                 timetable = timetable_net[l]
                 for route in line.routes:
@@ -524,12 +523,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
                     if route is not None:
                         first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
+                        if (route[0], route[-1]) in desired_arr_times.keys():
+                            first_arr_time = desired_arr_times[(route[0], route[-1])]
                         service, valid = construct_service(route, service_nums, 0, line, first_arr_time, time_span,
                                                            timetable, arr_slots)
                         if valid:
                             added_servs.append(service)
                             last_routes[line.line_id, 0] = (route[0], route[-1])
-                            # update turn-back connections
+                            # update turn-back connections-
                             if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
                                 direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
                                 if direction == 'from':
@@ -547,7 +548,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 timetable.services_queues[physic_sta_id]['from'].append(service.id)
 
                     # downstream ********************
-                    dn_route_pool, dedicated_turn_back_servs = (
+                    dn_route_pool, dedicated_turn_back_servs, desired_arr_times = (
                         process_routes(line, depots, line.dn_routes, weights_dict, n, 1, arr_slots,
                                        depots_net_flow, timetable, headway_dn, time_span))
 
@@ -569,6 +570,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                             route = dn_route_pool[0]
                     if route is not None:
                         first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
+                        if (route[0], route[-1]) in desired_arr_times.keys():
+                            first_arr_time = desired_arr_times[(route[0], route[-1])]
                         service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
                                                            timetable, arr_slots)
                         if valid:
@@ -1065,9 +1068,10 @@ def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, de
         last_arr_time_first_station = arr_slots[(line.line_id, route[0])]
         # the original desired arrive time
         desired_arr_time = last_arr_time_first_station + headway
-        if line.line_id == '1' and route[0] == 0 and desired_arr_time < 21600:
-            ssd = 0
-        # the first station of this route does not connect with depots, alter the desired_arr_time for turn-back connections
+        available_range_arr_time_for_headway = [last_arr_time_first_station + HEADWAY_MIN,
+                                                last_arr_time_first_station + HEADWAY_MAX]
+        # the first station of this route does not connect with depots, alter the desired_arr_time
+        # for turn-back connections
         potential_from_service_id = -1
         if route[0] not in line.stations_conn_depots:
             is_desired_arr_time_altered = False
@@ -1076,10 +1080,14 @@ def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, de
             for serv_id in front_services:
                 service = timetable.services[serv_id]
                 if service.next_service == -1:
-                    desired_arr_time = service.deps[-1] + HEADWAY_MIN
-                    potential_from_service_id = service.id
-                    is_desired_arr_time_altered = True
-                    break
+                    available_range_arr_time_for_turnback = [service.deps[-1] + TURNBACK_MIN_SECS,
+                                                             service.deps[-1] + TURNBACK_MAX_SECS]
+                    if is_overlapping(available_range_arr_time_for_headway, available_range_arr_time_for_turnback):
+                        desired_arr_time = overlapping_region(available_range_arr_time_for_headway,
+                                                              available_range_arr_time_for_turnback)[0]
+                        potential_from_service_id = service.id
+                        is_desired_arr_time_altered = True
+                        break
             # no front services, skip
             if not is_desired_arr_time_altered:
                 continue
@@ -1149,6 +1157,9 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
         else:
             timetable.dn_services.append(service.id)
 
+        if line.line_id == '0' and route[0] == 23 and service.arrs[0] == 61830:
+            ssd = 0
+
         # update the last arrive time (arr_slots)
         for k in range(0, len(service.route)):
             arr_slots[line.line_id, service.route[k]] = service.arrs[k]
@@ -1171,3 +1182,14 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
                                                   line.dwells[sta_id - 1]
 
     return service, is_valid
+
+
+def is_overlapping(x, y):
+    return not (x[1] < y[0] or y[1] < x[0])
+
+
+def overlapping_region(x, y):
+    if is_overlapping(x, y):
+        return [max(x[0], y[0]), min(x[1], y[1])]
+    else:
+        return None
