@@ -6,7 +6,7 @@ class RailLine:
         self.routes = []  # available train routes
         self.up_routes = []
         self.dn_routes = []
-
+        self.is_loop_line = False
         self.up_stations = []  # up direction stations
         self.dn_stations = []  # down direction stations
         self.runtimes = {}  # section runtimes

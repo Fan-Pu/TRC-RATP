@@ -5,6 +5,7 @@ import random
 import statistics
 import time
 from collections import OrderedDict
+import shutil
 
 import pandas as pd
 
@@ -72,7 +73,7 @@ def read_lines(folder_path):
                 ) = row
 
                 rail_line.dwells[int(station_id)] = int(dwell_time)
-                if not int(station_id) in rail_line.up_stations:
+                if int(station_id) not in rail_line.up_stations:
                     rail_line.up_stations.append(int(station_id))
 
                     if conn_depot_id != "":
@@ -91,6 +92,7 @@ def read_lines(folder_path):
                     temp_runtime = rail_line.runtimes[(station_cnt - 1, station_cnt)]
                     del rail_line.runtimes[(station_cnt - 1, station_cnt)]
                     rail_line.runtimes[(station_cnt - 1, 0)] = temp_runtime
+                    rail_line.is_loop_line = True
 
                 # add up direction platform names
                 if (station_id, 0) not in rail_line.platform_names:
@@ -129,13 +131,41 @@ def read_lines(folder_path):
 
     # generate feasible routes (short turning routes needs to be determined by passenger flow)
     for key, line in lines.items():
-        # up direction full route
-        line.routes.append(line.up_stations)
-        line.up_routes.append((line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1])))
-        # down direction full route
-        line.routes.append(line.dn_stations)
-        line.dn_routes.append((line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1])))
+        if not line.is_loop_line:
+            # up direction full route
+            line.routes.append(line.up_stations)
+            line.up_routes.append((line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1])))
+            # down direction full route
+            line.routes.append(line.dn_stations)
+            line.dn_routes.append((line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1])))
+        else:
+            # up direction full route
+            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
+                temp_route = line.up_stations + [line.up_stations[0]]
+                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
+                               line.runtimes[(temp_route[-2], temp_route[0])]
+                line.routes.append(temp_route)
+                line.up_routes.append((temp_route, temp_runtime))
+            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
+                temp_route = [line.up_stations[-1]] + line.up_stations
+                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
+                               line.runtimes[(temp_route[0], temp_route[1])]
+                line.routes.append(temp_route)
+                line.up_routes.append((temp_route, temp_runtime))
 
+            # dn direction full route
+            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
+                temp_route = [line.dn_stations[-1]] + line.dn_stations
+                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
+                               line.runtimes[(temp_route[0], temp_route[1])]
+                line.routes.append(temp_route)
+                line.dn_routes.append((temp_route, temp_runtime))
+            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
+                temp_route = line.dn_stations + [line.dn_stations[0]]
+                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
+                               line.runtimes[(temp_route[-2], temp_route[-1])]
+                line.routes.append(temp_route)
+                line.dn_routes.append((temp_route, temp_runtime))
     return lines
 
 
@@ -254,22 +284,14 @@ def set_line_short_routes(lines, passenger_flows):
                             ) / (len(route) - 1)
                             avg_passenger_flows[k].append(avg_passenger_flow)
                     # average flow over peak hours and routes
-                    avg_passenger_flows = [
-                        statistics.mean(avg_passenger_flows[0]),
-                        statistics.mean(avg_passenger_flows[-1]),
-                    ]
-                    if max(avg_passenger_flows) > FLOW_FACTOR * min(
-                            avg_passenger_flows
-                    ):
+                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
+                                           statistics.mean(avg_passenger_flows[-1])]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
                         is_flow_unbalance = True
                         # generate short routes
-                        short_route_id = avg_passenger_flows.index(
-                            max(avg_passenger_flows)
-                        )
+                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
                         short_route = routes[short_route_id]
-                        short_route_reverse = [
-                                                  2 * len(line.up_stations) - 1 - i for i in short_route
-                                              ][::-1]
+                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
                         new_short_routes += [short_route, short_route_reverse]
                         break  # breaks 'for key, rows in flow_data.items()'
 
@@ -312,7 +334,18 @@ def set_line_short_routes(lines, passenger_flows):
                         new_short_routes += [short_route, short_route_reverse]
                         break  # breaks 'for key, rows in flow_data.items()'
 
-        if is_flow_unbalance:
+        # for normal line
+        if not line.is_loop_line and is_flow_unbalance:
+            # generate short routes
+            line.routes += new_short_routes
+            for short_route in new_short_routes:
+                route_runtime = line.get_runtime(short_route[0], short_route[-1])
+                if short_route[0] <= line.up_stations[-1]:
+                    line.up_routes.append((short_route, route_runtime))
+                else:
+                    line.dn_routes.append((short_route, route_runtime))
+        # for loop line
+        elif line.is_loop_line and len(line.stations_conn_depots) == 2:
             # generate short routes
             line.routes += new_short_routes
             for short_route in new_short_routes:
@@ -448,7 +481,10 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
 
 def gen_timetables(iter_max, lines, depots, passenger_flows):
     root_folder = "./test/"
-    if not os.path.exists(root_folder):
+    if os.path.exists(root_folder):
+        shutil.rmtree(root_folder)
+        os.mkdir(root_folder)
+    else:
         os.mkdir(root_folder)
 
     random.seed(2023)
@@ -489,6 +525,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
                 headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
 
+                if l == '3':
+                    ssda = 0
                 ssa = 0
                 # add upstream and downstream services
                 while True:
@@ -530,7 +568,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         if valid:
                             added_servs.append(service)
                             last_routes[line.line_id, 0] = (route[0], route[-1])
-                            # update turn-back connections-
+                            # update turn-back connections
                             if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
                                 direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
                                 if direction == 'from':
@@ -642,12 +680,20 @@ def export_timetable(folder, timetable_net, lines):
     for l, timetable in timetable_net.items():
         line = lines[l]
         folder_name = folder + str(l) + "/"
+
         if not os.path.exists(folder_name):
             os.mkdir(folder_name)
+        # save each service
         for serv_id, service in timetable.services.items():
-            csv_file_path = folder_name + "vehicle[{}].csv".format(str(serv_id))
+            csv_file_path = folder_name + "service[{}].csv".format(str(serv_id))
             csv_data = [["line_idx", "sta_idx", "dir", "type", "time", "depot_idx"]]
             for i in range(0, len(service.route)):
+                if service.direction == 0 and line.is_loop_line and len(service.route) > len(line.up_stations):
+                    if i == 0:
+                        continue
+                if service.direction == 1 and line.is_loop_line and len(service.route) > len(line.up_stations):
+                    if i == len(service.route) - 1:
+                        continue
                 sta_id = service.route[i]
                 arr_time = service.arrs[i]
                 dep_time = service.deps[i]
@@ -663,6 +709,15 @@ def export_timetable(folder, timetable_net, lines):
             with open(csv_file_path, mode="w", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerows(csv_data)
+        # generate a file to save turn-back connections
+        csv_file_path = folder_name + "connections.csv"
+        csv_data = [["serv_sequence"]]
+        for first_serv_id, serv_sequence in timetable.turn_back_connections.items():
+            result_string = '-'.join(map(str, serv_sequence))
+            csv_data.append([result_string])
+        with open(csv_file_path, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerows(csv_data)
 
 
 def passenger_flow_simulate(timetable_net, lines, passenger_flows):
@@ -887,30 +942,35 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                         break
                     to_service = timetable.services[service_queue["to"][j]]
                     to_time = to_service.arrs[0]
-                    # less than the minimum turnback time, move j to the next
-                    if to_time - from_time < TURNBACK_MIN_SECS:
-                        j += 1
-                        j_pivot = j
-                    # larger than the maximum turnback time
-                    elif to_time - from_time > TURNBACK_MAX_SECS:
-                        break
-                    # valid turnback time
-                    else:
-                        # to_service is already connected by other services
-                        if to_service.front_service != -1:
+                    # for normal line
+                    if not line.is_loop_line:
+                        # less than the minimum turnback time, move j to the next
+                        if to_time - from_time < TURNBACK_MIN_SECS:
                             j += 1
-                        # is valid to have a connection
+                            j_pivot = j
+                        # larger than the maximum turnback time
+                        elif to_time - from_time > TURNBACK_MAX_SECS:
+                            break
+                        # valid turnback time
                         else:
-                            from_service.next_service = to_service.id
-                            to_service.front_service = from_service.id
+                            # to_service is already connected by other services
+                            if to_service.front_service != -1:
+                                j += 1
+                            # is valid to have a connection
+                            else:
+                                from_service.next_service = to_service.id
+                                to_service.front_service = from_service.id
 
-                            if from_service.first_service == -1:
-                                from_service.first_service = from_service.id
+                                if from_service.first_service == -1:
+                                    from_service.first_service = from_service.id
 
-                            to_service.first_service = from_service.first_service
-                            to_service.front_service = from_service.id
-                            from_service.next_service = to_service.id
-                            j_pivot = j + 1
+                                to_service.first_service = from_service.first_service
+                                to_service.front_service = from_service.id
+                                from_service.next_service = to_service.id
+                                j_pivot = j + 1
+                    # for loop line
+                    else:
+
 
         # generate service journeys
         for service_id in timetable.up_services + timetable.dn_services:
@@ -1065,64 +1125,81 @@ def process_routes(line, depots, routes, weights_dict, n, dir_idx, arr_slots, de
     end_time_secs = timespan[-1] * 60
 
     for route, runtime in routes:
-        last_arr_time_first_station = arr_slots[(line.line_id, route[0])]
-        # the original desired arrive time
-        desired_arr_time = last_arr_time_first_station + headway
-        available_range_arr_time_for_headway = [last_arr_time_first_station + HEADWAY_MIN,
-                                                last_arr_time_first_station + HEADWAY_MAX]
-        # the first station of this route does not connect with depots, alter the desired_arr_time
-        # for turn-back connections
-        potential_from_service_id = -1
-        if route[0] not in line.stations_conn_depots:
-            is_desired_arr_time_altered = False
-            turnback_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
-            front_services = timetable.services_queues[turnback_sta_id]['from']
-            for serv_id in front_services:
-                service = timetable.services[serv_id]
-                if service.next_service == -1:
-                    available_range_arr_time_for_turnback = [service.deps[-1] + TURNBACK_MIN_SECS,
-                                                             service.deps[-1] + TURNBACK_MAX_SECS]
-                    if is_overlapping(available_range_arr_time_for_headway, available_range_arr_time_for_turnback):
-                        desired_arr_time = overlapping_region(available_range_arr_time_for_headway,
-                                                              available_range_arr_time_for_turnback)[0]
-                        potential_from_service_id = service.id
-                        is_desired_arr_time_altered = True
-                        break
-            # no front services, skip
-            if not is_desired_arr_time_altered:
-                continue
-
-        # if the desired_arr_time exceed the time window
-        if desired_arr_time >= end_time_secs:
-            continue
-        # remain time is not sufficient for this route
-        if last_arr_time_first_station + headway + runtime >= END_TIME * 60:
-            continue
-
         from_depot_id = line.stations_conn_depots.get(route[0], -1)
         to_depot_id = line.stations_conn_depots.get(route[-1], -1)
+        if not line.is_loop_line:
+            last_arr_time_first_station = max(arr_slots[(line.line_id, route[0])], timespan[0] * 60)
+            # the original desired arrive time
+            desired_arr_time = last_arr_time_first_station + headway
+            available_range_arr_time_for_headway = [last_arr_time_first_station + HEADWAY_MIN,
+                                                    last_arr_time_first_station + HEADWAY_MAX]
+            # the first station of this route does not connect with depots, alter the desired_arr_time
+            # for turn-back connections
+            potential_from_service_id = -1
+            if route[0] not in line.stations_conn_depots:
+                # a normal line
+                if not line.is_loop_line:
+                    is_desired_arr_time_altered = False
+                    turnback_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
+                    front_services = timetable.services_queues[turnback_sta_id]['from']
+                    for serv_id in front_services:
+                        service = timetable.services[serv_id]
+                        if service.next_service == -1:
+                            available_range_arr_time_for_turnback = [service.deps[-1] + TURNBACK_MIN_SECS,
+                                                                     service.deps[-1] + TURNBACK_MAX_SECS]
+                            if is_overlapping(available_range_arr_time_for_headway,
+                                              available_range_arr_time_for_turnback):
+                                desired_arr_time = overlapping_region(available_range_arr_time_for_headway,
+                                                                      available_range_arr_time_for_turnback)[0]
+                                potential_from_service_id = service.id
+                                is_desired_arr_time_altered = True
+                                break
+                    # no front services, skip
+                    if not is_desired_arr_time_altered:
+                        continue
 
-        if line.line_id == '1' and route[0] == 0:
-            ssd = 0
+            # if the desired_arr_time exceed the time window
+            if desired_arr_time >= end_time_secs:
+                continue
+            # remain time is not sufficient for this route
+            if last_arr_time_first_station + headway + runtime >= END_TIME * 60:
+                continue
 
-        # each terminal station of this route connect with depot
-        if from_depot_id != -1 and to_depot_id != -1:
+            # each terminal station of this route connect with depot
+            if from_depot_id != -1 and to_depot_id != -1:
+                # the route is valid to be scheduled
+                if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity and \
+                        -depots_net_flow[str(to_depot_id)] < depots[str(to_depot_id)].capacity:
+                    route_pool.append(route)
+                    desired_arr_times[(route[0], route[-1])] = desired_arr_time
+            # do not have "from" depot
+            elif from_depot_id == -1 and to_depot_id != -1:
+                # the route is valid to be scheduled
+                if -depots_net_flow[str(to_depot_id)] < depots[str(to_depot_id)].capacity:
+                    route_pool.append(route)
+                    dedicated_turn_back_servs[(route[0], route[-1])] = ('from', potential_from_service_id)
+                    desired_arr_times[(route[0], route[-1])] = desired_arr_time
+            # do not have "to" depot
+            elif to_depot_id == -1 and from_depot_id != -1:
+                # the route is valid to be scheduled
+                if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity:
+                    route_pool.append(route)
+                    desired_arr_times[(route[0], route[-1])] = desired_arr_time
+        else:
+            last_arr_time_first_station = max(arr_slots[(line.line_id, route[0])], timespan[0] * 60)
+            # the original desired arrive time
+            desired_arr_time = last_arr_time_first_station + headway
+            # if the desired_arr_time exceed the time window
+            if desired_arr_time >= end_time_secs:
+                continue
+            # remain time is not sufficient for this route
+            if last_arr_time_first_station + headway + runtime >= END_TIME * 60:
+                continue
+
+            # each terminal station of this route connect with depot
             # the route is valid to be scheduled
             if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity and \
                     -depots_net_flow[str(to_depot_id)] < depots[str(to_depot_id)].capacity:
-                route_pool.append(route)
-                desired_arr_times[(route[0], route[-1])] = desired_arr_time
-        # do not have "from" depot
-        elif from_depot_id == -1 and to_depot_id != -1:
-            # the route is valid to be scheduled
-            if -depots_net_flow[str(to_depot_id)] < depots[str(to_depot_id)].capacity:
-                route_pool.append(route)
-                dedicated_turn_back_servs[(route[0], route[-1])] = ('from', potential_from_service_id)
-                desired_arr_times[(route[0], route[-1])] = desired_arr_time
-        # do not have "to" depot
-        elif to_depot_id == -1 and from_depot_id != -1:
-            # the route is valid to be scheduled
-            if depots_net_flow[str(from_depot_id)] < depots[str(from_depot_id)].capacity:
                 route_pool.append(route)
                 desired_arr_times[(route[0], route[-1])] = desired_arr_time
 
@@ -1139,9 +1216,9 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
     service.arrs.append(arr_time)
     service.deps.append(dep_time)
 
-    for sta_id in route[1:]:  # skip the first station of this route
-        arr_time = dep_time + line.runtimes[sta_id - 1, sta_id]
-        dep_time = arr_time + line.dwells[sta_id]
+    for i in range(1, len(route)):  # skip the first station of this route
+        arr_time = dep_time + line.runtimes[route[i - 1], route[i]]
+        dep_time = arr_time + line.dwells[route[i]]
         service.arrs.append(arr_time)
         service.deps.append(dep_time)
 
@@ -1161,7 +1238,7 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
             ssd = 0
 
         # update the last arrive time (arr_slots)
-        for k in range(0, len(service.route)):
+        for k in range(0, len(service.route) - 1):
             arr_slots[line.line_id, service.route[k]] = service.arrs[k]
         min_sta_id = line.up_stations[0] if service.direction == 0 else line.dn_stations[0]
         max_sta_id = line.up_stations[-1] if service.direction == 0 else line.dn_stations[-1]
@@ -1178,8 +1255,7 @@ def construct_service(route, service_nums, dir_id, line, first_arr_time, time_sp
                                                   line.dwells[sta_id - 1]
             else:
                 arr_slots[line.line_id, sta_id] = arr_slots[line.line_id, sta_id - 1] + line.runtimes[
-                    sta_id - 1, sta_id] + \
-                                                  line.dwells[sta_id - 1]
+                    sta_id - 1, sta_id] + line.dwells[sta_id - 1]
 
     return service, is_valid
 
