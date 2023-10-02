@@ -27,6 +27,8 @@ TRAIN_CAPACITY = 1200  # loading capacity
 TRANSFER_SECS = 120  # fixed transfer time
 TURNBACK_MAX_SECS = 10 * 60  # maximum turnback time
 TURNBACK_MIN_SECS = 2 * 60  # minimum turnback time
+LOOPLINE_CONN_MIN_SECS = 0 * 60  # minimum connection time for loop line
+LOOPLINE_CONN_MAX_SECS = 5 * 60  # maximum connection time for loop line
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -519,8 +521,11 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 timetable = timetable_net[l]
                 for route in line.routes:
                     for sta_id in [route[0], route[-1]]:
-                        physic_sta_id = min(sta_id, 2 * len(line.up_stations) - 1 - sta_id)
-                        timetable.services_queues.setdefault(physic_sta_id, {"from": [], "to": []})
+                        if not line.is_loop_line:
+                            physic_sta_id = min(sta_id, 2 * len(line.up_stations) - 1 - sta_id)
+                            timetable.services_queues.setdefault(physic_sta_id, {"from": [], "to": []})
+                        else:
+                            timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
                 start_time_secs = time_span[0] * 60
                 headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
                 headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
@@ -578,12 +583,21 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                     service.next_service = serv_id
                                     timetable.services[serv_id].front_service = service.id
 
+                            if line.line_id == '1' and service.id == 28:
+                                ssda = 0
+
                             if service.front_service == -1:
-                                physic_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
-                                timetable.services_queues[physic_sta_id]['to'].append(service.id)
+                                if not line.is_loop_line:
+                                    physic_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
+                                    timetable.services_queues[physic_sta_id]['to'].append(service.id)
+                                else:
+                                    timetable.services_queues[route[0]]['to'].append(service.id)
                             if service.next_service == -1:
-                                physic_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
-                                timetable.services_queues[physic_sta_id]['from'].append(service.id)
+                                if not line.is_loop_line:
+                                    physic_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
+                                    timetable.services_queues[physic_sta_id]['from'].append(service.id)
+                                else:
+                                    timetable.services_queues[route[-1]]['from'].append(service.id)
 
                     # downstream ********************
                     dn_route_pool, dedicated_turn_back_servs, desired_arr_times = (
@@ -625,12 +639,21 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                     service.next_service = serv_id
                                     timetable.services[serv_id].front_service = service.id
 
+                            if line.line_id == '1' and service.id == 28:
+                                ssda = 0
+
                             if service.front_service == -1:
-                                physic_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
-                                timetable.services_queues[physic_sta_id]['to'].append(service.id)
+                                if not line.is_loop_line:
+                                    physic_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
+                                    timetable.services_queues[physic_sta_id]['to'].append(service.id)
+                                else:
+                                    timetable.services_queues[route[0]]['to'].append(service.id)
                             if service.next_service == -1:
-                                physic_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
-                                timetable.services_queues[physic_sta_id]['from'].append(service.id)
+                                if not line.is_loop_line:
+                                    physic_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
+                                    timetable.services_queues[physic_sta_id]['from'].append(service.id)
+                                else:
+                                    timetable.services_queues[route[-1]]['from'].append(service.id)
 
                     ssa += 1
                     if len(added_servs) == 0:
@@ -920,30 +943,31 @@ def calculate_service_quality(timetable_net, lines):
 def gen_vehicle_circulation(timetable_net, lines, depots):
     for l, timetable in timetable_net.items():
         line = lines[l]
-        services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
-        for service_id in timetable.up_services + timetable.dn_services:
-            service = timetable.services[service_id]
-            # add this service to services_queues
-            for turn_back_platform in services_queues.keys():
-                if service.route[-1] == turn_back_platform:
-                    services_queues[turn_back_platform]["from"].append(service.id)
-                if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
-                    services_queues[turn_back_platform]["to"].append(service.id)
+        services_queues = timetable.services_queues
+        # services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
+        # for service_id in timetable.up_services + timetable.dn_services:
+        #     service = timetable.services[service_id]
+        #     # add this service to services_queues
+        #     for turn_back_platform in services_queues.keys():
+        #         if service.route[-1] == turn_back_platform:
+        #             services_queues[turn_back_platform]["from"].append(service.id)
+        #         if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
+        #             services_queues[turn_back_platform]["to"].append(service.id)
         # start linking services
         for turn_back_platform in services_queues.keys():
             service_queue = services_queues[turn_back_platform]
             j_pivot = 0  # lies around the last i's minimum turnback time index
             for i in range(len(service_queue["from"])):
                 from_service = timetable.services[service_queue["from"][i]]
-                from_time = from_service.deps[-1]
                 j = j_pivot
                 while True:
                     if j == len(service_queue["to"]):
                         break
-                    to_service = timetable.services[service_queue["to"][j]]
-                    to_time = to_service.arrs[0]
                     # for normal line
                     if not line.is_loop_line:
+                        from_time = from_service.deps[-1]
+                        to_service = timetable.services[service_queue["to"][j]]
+                        to_time = to_service.arrs[0]
                         # less than the minimum turnback time, move j to the next
                         if to_time - from_time < TURNBACK_MIN_SECS:
                             j += 1
@@ -970,7 +994,42 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                                 j_pivot = j + 1
                     # for loop line
                     else:
+                        # check the connection time
+                        from_time = from_service.arrs[-1]
+                        to_service = timetable.services[service_queue["to"][j]]
+                        to_time = to_service.arrs[0]
 
+                        if line.line_id == '1' and from_service.id == 0 and to_service.id == 28:
+                            sdsada = 0
+                        # only consider services with the same direction
+                        if from_service.direction != to_service.direction:  # move j to the next
+                            j += 1
+                            j_pivot = j
+                            continue
+                        # less than the minimum turnback time, move j to the next
+                        if to_time - from_time < LOOPLINE_CONN_MIN_SECS:
+                            j += 1
+                            j_pivot = j
+                        # larger than the maximum turnback time
+                        elif to_time - from_time > LOOPLINE_CONN_MAX_SECS:
+                            break
+                        # valid turnback time
+                        else:
+                            # to_service is already connected by other services
+                            if to_service.front_service != -1:
+                                j += 1
+                            # is valid to have a connection
+                            else:
+                                from_service.next_service = to_service.id
+                                to_service.front_service = from_service.id
+
+                                if from_service.first_service == -1:
+                                    from_service.first_service = from_service.id
+
+                                to_service.first_service = from_service.first_service
+                                to_service.front_service = from_service.id
+                                from_service.next_service = to_service.id
+                                j_pivot = j + 1
 
         # generate service journeys
         for service_id in timetable.up_services + timetable.dn_services:
@@ -1040,9 +1099,7 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
         for key in to_delete:
             del timetable.turn_back_connections[key]
         for key_new, key_delete in to_replace:
-            timetable.turn_back_connections[key_new] = timetable.turn_back_connections[
-                key_delete
-            ]
+            timetable.turn_back_connections[key_new] = timetable.turn_back_connections[key_delete]
             del timetable.turn_back_connections[key_delete]
 
 
