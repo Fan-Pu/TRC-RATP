@@ -530,9 +530,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
                 headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
 
-                if l == '3':
-                    ssda = 0
-                ssa = 0
                 # add upstream and downstream services
                 while True:
                     added_servs = []
@@ -582,9 +579,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 else:
                                     service.next_service = serv_id
                                     timetable.services[serv_id].front_service = service.id
-
-                            if line.line_id == '1' and service.id == 28:
-                                ssda = 0
 
                             if service.front_service == -1:
                                 if not line.is_loop_line:
@@ -653,7 +647,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 else:
                                     timetable.services_queues[route[-1]]['from'].append(service.id)
 
-                    ssa += 1
                     if len(added_servs) == 0:
                         break  # breaks the While loop
 
@@ -670,7 +663,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         gen_vehicle_circulation(timetable_net, lines, depots)
 
         # generate rolling stock allocation plan
-        # gen_rs_allocation_plan(timetable_net, lines, depots)
+        gen_rs_allocation_plan(timetable_net, lines, depots)
 
         timetable_pool.append((timetable_net, avg_serv_quality))
 
@@ -1162,6 +1155,11 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                         timetable.turn_back_connections[serv_new_lead.id] = timetable.turn_back_connections \
                             .pop(serv_new_lead.next_service)
                     iiisda = 0
+            # update last service
+            for fir_serv_id, service_queue in timetable.turn_back_connections.items():
+                last_serv_id = service_queue[-1]
+                for serv_id in service_queue[:-1]:
+                    timetable.services[serv_id].last_service = last_serv_id
 
 
 def gen_rs_allocation_plan(timetable_net, lines, depots):
