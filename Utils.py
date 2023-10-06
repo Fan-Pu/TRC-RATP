@@ -626,6 +626,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                             first_arr_time = desired_arr_times[(route[0], route[-1])]
                         service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
                                                            timetable, arr_slots)
+
                         if valid:
                             added_servs.append(service)
                             last_routes[line.line_id, 1] = (route[0], route[-1])
@@ -638,9 +639,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 else:
                                     service.next_service = serv_id
                                     timetable.services[serv_id].front_service = service.id
-
-                            if line.line_id == '1' and service.id == 28:
-                                ssda = 0
 
                             if service.front_service == -1:
                                 if not line.is_loop_line:
@@ -944,15 +942,6 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
     for l, timetable in timetable_net.items():
         line = lines[l]
         services_queues = timetable.services_queues
-        # services_queues = {route[-1]: {"from": [], "to": []} for route in line.routes}
-        # for service_id in timetable.up_services + timetable.dn_services:
-        #     service = timetable.services[service_id]
-        #     # add this service to services_queues
-        #     for turn_back_platform in services_queues.keys():
-        #         if service.route[-1] == turn_back_platform:
-        #             services_queues[turn_back_platform]["from"].append(service.id)
-        #         if service.route[0] == 2 * len(line.up_stations) - 1 - turn_back_platform:
-        #             services_queues[turn_back_platform]["to"].append(service.id)
         # start linking services
         for turn_back_platform in services_queues.keys():
             service_queue = services_queues[turn_back_platform]
@@ -961,7 +950,7 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                 from_service = timetable.services[service_queue["from"][i]]
                 j = j_pivot
                 while True:
-                    if j == len(service_queue["to"]):
+                    if j == len(service_queue["to"]) or from_service.next_service != -1:
                         break
                     # for normal line
                     if not line.is_loop_line:
@@ -999,7 +988,7 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
                         to_service = timetable.services[service_queue["to"][j]]
                         to_time = to_service.arrs[0]
 
-                        if line.line_id == '1' and from_service.id == 0 and to_service.id == 28:
+                        if line.line_id == '1' and from_service.id == 47 and to_service.id == 92:
                             sdsada = 0
                         # only consider services with the same direction
                         if from_service.direction != to_service.direction:  # move j to the next
@@ -1101,6 +1090,78 @@ def gen_vehicle_circulation(timetable_net, lines, depots):
         for key_new, key_delete in to_replace:
             timetable.turn_back_connections[key_new] = timetable.turn_back_connections[key_delete]
             del timetable.turn_back_connections[key_delete]
+
+        # for loop lines, separate services from the route
+        if line.is_loop_line:
+            separate_services = []
+            for serv_id, serv in timetable.services.items():
+                if serv.route[0] == serv.route[-1]:
+                    separate_services.append(serv)
+            serv_num = len(timetable.services)
+            for serv in separate_services:
+                # turn-back at the start
+                if abs(serv.route[0] - serv.route[1]) != 1:
+                    serv_new_follow = TrainService(serv_num, serv.direction, serv.route[1:], line.line_id)
+                    serv_num += 1
+                    # alter arrs and deps of serv_new_follow
+                    serv.route = serv.route[:1]
+                    serv_new_follow.arrs = serv.arrs[1:]
+                    serv_new_follow.deps = serv.deps[1:]
+                    serv.arrs = serv.arrs[:1]
+                    serv.deps = serv.deps[:1]
+
+                    servs_sequence = timetable.turn_back_connections[serv.first_service]
+                    # this service is the last of vehicle, update "last_service" for all involving services
+                    if serv.id == servs_sequence[-1]:
+                        for temp_serv_id in servs_sequence:
+                            timetable.services[temp_serv_id].last_service = serv_new_follow.id
+                        serv_new_follow.last_service = serv_new_follow.id
+                    else:
+                        # add turn-back connections
+                        temp_serv_id = servs_sequence[servs_sequence.index(serv.id) + 1]
+                        timetable.services[temp_serv_id].front_service = serv_new_follow.id
+                        serv_new_follow.next_service = temp_serv_id
+                    # add turn-back connections
+                    serv.next_service = serv_new_follow.id
+                    serv_new_follow.front_service = serv.id
+                    # insert
+                    servs_sequence.insert(servs_sequence.index(serv.id) + 1, serv_new_follow.id)
+                    # add this new service to timetable
+                    timetable.services[serv_new_follow.id] = serv_new_follow
+                # turn-back at the end
+                else:
+                    serv_new_lead = TrainService(serv_num, serv.direction, serv.route[:-1], line.line_id)
+                    serv_num += 1
+                    # alter arrs and deps of serv_new_follow
+                    serv.route = serv.route[-1:]
+                    serv_new_lead.arrs = serv.arrs[:-1]
+                    serv_new_lead.deps = serv.deps[:-1]
+                    serv.arrs = serv.arrs[-1:]
+                    serv.deps = serv.deps[-1:]
+
+                    servs_sequence = timetable.turn_back_connections[serv.first_service]
+                    # this service is the first of vehicle, update "first_service" for all involving services
+                    if serv.id == servs_sequence[0]:
+                        for temp_serv_id in servs_sequence:
+                            timetable.services[temp_serv_id].first_service = serv_new_lead.id
+                        serv_new_lead.first_service = serv_new_lead.id
+                    else:
+                        # add turn-back connections
+                        temp_serv_id = servs_sequence[servs_sequence.index(serv.id) - 1]
+                        timetable.services[temp_serv_id].next_service = serv_new_lead.id
+                        serv_new_lead.front_service = temp_serv_id
+                    # add turn-back connections
+                    serv.front_service = serv_new_lead.id
+                    serv_new_lead.next_service = serv.id
+                    # insert
+                    servs_sequence.insert(servs_sequence.index(serv.id), serv_new_lead.id)
+                    # add this new service to timetable
+                    timetable.services[serv_new_lead.id] = serv_new_lead
+                    # update timetable.turn_back_connections, if new service is the first service
+                    if serv_new_lead.first_service == serv_new_lead.id:
+                        timetable.turn_back_connections[serv_new_lead.id] = timetable.turn_back_connections \
+                            .pop(serv_new_lead.next_service)
+                    iiisda = 0
 
 
 def gen_rs_allocation_plan(timetable_net, lines, depots):
