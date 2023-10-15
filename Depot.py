@@ -6,6 +6,6 @@ class Depot:
         self.id = id
         self.conn_lines = []
         self.conn_stations = defaultdict(list)  # key: line_id, value: list(station_id)
-        self.runtime = {}
+        self.runtime = {}  # key (line_id,station_id)
         self.capacity = 0
         self.maximum_flow = 0
