@@ -11,3 +11,5 @@ class TrainService:
         self.next_service = -1
         self.first_service = -1
         self.last_service = -1
+        self.from_depot_id = -1
+        self.to_depot_id = -1
