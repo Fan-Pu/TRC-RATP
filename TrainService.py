@@ -13,3 +13,4 @@ class TrainService:
         self.last_service = -1
         self.from_depot_id = -1
         self.to_depot_id = -1
+        self.has_vehicle = False

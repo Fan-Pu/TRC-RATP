@@ -23,8 +23,11 @@ END_TIME = 24 * 60
 PEAK_HOURS = [(7 * 60, 9 * 60), (17 * 60, 19 * 60)]
 FLOW_FACTOR = 1.5
 HEADWAY_MIN = 180  # seconds
-HEADWAY_MAX = 600
-HEADWAY_POOL = [i for i in range(HEADWAY_MIN, HEADWAY_MAX + 1, int((HEADWAY_MAX - HEADWAY_MIN) / 2))]
+HEADWAY_MAX = 480
+HEADWAY_POOL_OFFPEAK = [i for i in
+                        range(HEADWAY_MIN * 2, HEADWAY_MAX + 1, int((HEADWAY_MAX - HEADWAY_MIN) / 2))]  # 3 entries
+HEADWAY_POOL_PEAK = [i for i in
+                     range(HEADWAY_MIN, round(HEADWAY_MAX / 2) + 1, int((HEADWAY_MAX - HEADWAY_MIN) / 1))]  # 2 entries
 TRAIN_CAPACITY = 1200  # loading capacity
 TRANSFER_SECS = 120  # fixed transfer time
 TURNBACK_MAX_SECS = 10 * 60  # maximum turnback time
@@ -519,8 +522,11 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
     random.seed(2023)
 
     timetable_pool = []
-    weights_dict = {
-        (l, n, d): [100 for i in HEADWAY_POOL] for l in lines.keys() for n in N for d in [0, 1]
+    weights_dict_offpeak = {
+        (l, n, d): [100 for _ in HEADWAY_POOL_OFFPEAK] for l in lines.keys() for n in N for d in [0, 1]
+    }  # key l,n,d
+    weights_dict_peak = {
+        (l, n, d): [100 for _ in HEADWAY_POOL_PEAK] for l in lines.keys() for n in N for d in [0, 1]
     }  # key l,n,d
     for i in range(0, iter_max):
         print("iter: " + str(i))
@@ -556,12 +562,20 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         else:
                             timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
                 start_time_secs = time_span[0] * 60
-                headway_up = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 0])
-                headway_dn = roulette_selection(HEADWAY_POOL, weights_dict[line.line_id, n, 1])
+                headway_up = roulette_selection(HEADWAY_POOL_OFFPEAK, weights_dict_offpeak[
+                    line.line_id, n, 0]) if not is_in_peak_hour else (
+                    roulette_selection(HEADWAY_POOL_PEAK,
+                                       weights_dict_peak[line.line_id, n, 0]))
+                headway_dn = roulette_selection(HEADWAY_POOL_OFFPEAK, weights_dict_offpeak[
+                    line.line_id, n, 1]) if not is_in_peak_hour else (
+                    roulette_selection(HEADWAY_POOL_PEAK,
+                                       weights_dict_peak[line.line_id, n, 1]))
                 # add upstream and downstream services
                 while True:
                     added_servs = []
                     # upstream *******************
+                    if l == '3':
+                        sdds = 0
                     up_route_pool, dedicated_turn_back_servs, desired_arr_times = (
                         process_routes(line, line.up_routes, arr_slots,
                                        timetable, headway_up, time_span))
@@ -669,7 +683,6 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                             first_arr_time = desired_arr_times[(route[0], route[-1])]
                         service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
                                                            timetable, arr_slots)
-
                         if valid:
                             # save the info of connecting depots for this service
                             for term_sta in [route[0], route[-1]]:
@@ -707,16 +720,17 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                     if len(added_servs) == 0:
                         break  # breaks the While loop
 
+        # delete services when depot capacity is reached
+        delete_services(timetable_net, lines, depots)
+
         # simulate passenger flows and calculate service quality
-        # start_time = time.time()
+        start_time = time.time()
         # passenger_flow_simulate(timetable_net, lines, passenger_flows)
         # avg_serv_quality = calculate_service_quality(timetable_net, lines)
         avg_serv_quality = 0.5
-        # end_time = time.time()
-        # execution_time = end_time - start_time
-        # print(f"程序执行时间: {execution_time:.4f} 秒")
-
-        # delete_services(timetable_net, lines, depots)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
         gen_vehicle_circulation(timetable_net, lines)
@@ -730,7 +744,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         timetable_pool.append((timetable_net, avg_serv_quality))
 
-        export_timetable(root_folder, timetable_net, lines)
+        # export_timetable(root_folder, timetable_net, lines)
 
     return timetable_pool
 
@@ -1216,6 +1230,17 @@ def gen_vehicle_circulation(timetable_net, lines):
                         timetable.turn_back_connections[serv_new_lead.id] = timetable.turn_back_connections \
                             .pop(serv_new_lead.next_service)
 
+        # update service.has_vehicle
+        for turn_back_connection in timetable.turn_back_connections.values():
+            for serv_id in turn_back_connection:
+                timetable.services[serv_id].has_vehicle = True
+
+        # for services have not been assigned with a vehicle, generate a new vehicle for each of them
+        for serv in timetable.services.values():
+            if serv.has_vehicle == False:
+                timetable.turn_back_connections[serv.id].append(serv.id)
+                serv.has_vehicle = True
+
 
 def gen_rs_allocation_plan(depots, depots_dep_times, depots_arr_times):
     for depot_id, depot in depots.items():
@@ -1234,7 +1259,7 @@ def process_routes(line, routes, arr_slots, timetable, headway, timespan):
         from_depot_id = line.stations_conn_depots.get(route[0], -1)
         to_depot_id = line.stations_conn_depots.get(route[-1], -1)
         if not line.is_loop_line:
-            last_arr_time_first_station = max(arr_slots[(line.line_id, route[0])], timespan[0] * 60)
+            last_arr_time_first_station = max(arr_slots[(line.line_id, route[0])], timespan[0] * 60 - HEADWAY_MAX)
             # the original desired arrive time at the first station of the route
             desired_arr_time = last_arr_time_first_station + headway
             available_range_arr_time_for_headway = [last_arr_time_first_station + HEADWAY_MIN,
@@ -1248,6 +1273,7 @@ def process_routes(line, routes, arr_slots, timetable, headway, timespan):
                     is_desired_arr_time_altered = False
                     turnback_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
                     front_services = timetable.services_queues[turnback_sta_id]['from']
+
                     for serv_id in front_services:
                         service = timetable.services[serv_id]
                         if service.next_service == -1:
