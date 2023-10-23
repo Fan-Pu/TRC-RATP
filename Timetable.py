@@ -20,4 +20,4 @@ class Timetable:
         # self.p_transfer = {}  # transfer passengers, key: service_id
 
         self.turn_back_connections = {}  # key: first_service_of_vehicle, value: consecutive_services_of_vehicle
-        self.services_queues = {}
+        self.services_queues = {}  # use physical station id
