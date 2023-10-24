@@ -1,3 +1,4 @@
+import bisect
 import csv
 import math
 import os
@@ -36,6 +37,12 @@ LOOPLINE_CONN_MIN_SECS = 0 * 60  # minimum connection time for loop line
 LOOPLINE_CONN_MAX_SECS = 5 * 60  # maximum connection time for loop line
 SHORT_ROUTE_WEIGHT = 0.2
 FULL_ROUTE_WEIGHT = 1 - SHORT_ROUTE_WEIGHT
+INITIAL_HEADWAY_WEIGHT = 100
+HEADWAY_CHANGE_SCALE = 20
+SAVE_ALL_TIMETABLES = False
+SMALL_VALUE = 0.0000001
+OBJECTIVE_SCALE = 100
+LOS_BIAS = 100
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -512,22 +519,17 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
 
 
 def gen_timetables(iter_max, lines, depots, passenger_flows):
-    root_folder = "./test/"
-    if os.path.exists(root_folder):
-        shutil.rmtree(root_folder)
-        os.mkdir(root_folder)
-    else:
-        os.mkdir(root_folder)
-
     random.seed(2023)
 
-    timetable_pool = []
-    weights_dict_offpeak = {
-        (l, n, d): [100 for _ in HEADWAY_POOL_OFFPEAK] for l in lines.keys() for n in N for d in [0, 1]
-    }  # key l,n,d
-    weights_dict_peak = {
-        (l, n, d): [100 for _ in HEADWAY_POOL_PEAK] for l in lines.keys() for n in N for d in [0, 1]
-    }  # key l,n,d
+    solution_pool = list({})
+    # key l,n,d
+    headway_weights_dict = {(l, n, d): [INITIAL_HEADWAY_WEIGHT for _ in
+                                        (HEADWAY_POOL_PEAK if check_in_peak_hour(n) else HEADWAY_POOL_OFFPEAK)]
+                            for l in lines.keys() for n in N for d in [0, 1]}
+    # the p_wait result of the last passenger simulation
+    last_p_wait_results = {l: {} for l in lines.keys()}
+    # the indices of headways that has been selected in the last iteration
+    last_selected_headway_indices = {(l, n, d): -1 for l in lines.keys() for n in N for d in [0, 1]}
     for i in range(0, iter_max):
         print("iter: " + str(i))
         # generate a timetable for the network
@@ -542,14 +544,9 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         last_routes = {(line_id, dir_id): (None, None) for line_id in lines.keys()
                        for dir_id in [0, 1]}  # key: (line_id,direction) value: (sta_start,sta_end)
 
-        # depots_dep_times = {i: SortedDict() for i in depots.keys()}
-        # depots_arr_times = {i: SortedDict() for i in depots.keys()}
-
         # for each time window
         for n in N:
-            is_in_peak_hour = (
-                True if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1]) or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1])
-                else False)
+            is_in_peak_hour = check_in_peak_hour(n)
             time_span = [k for k in range(n, n + TIME_PERIOD)]
 
             for l, line in lines.items():  # for each line
@@ -562,14 +559,17 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         else:
                             timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
                 start_time_secs = time_span[0] * 60
-                headway_up = roulette_selection(HEADWAY_POOL_OFFPEAK, weights_dict_offpeak[
+                headway_up, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
                     line.line_id, n, 0]) if not is_in_peak_hour else (
                     roulette_selection(HEADWAY_POOL_PEAK,
-                                       weights_dict_peak[line.line_id, n, 0]))
-                headway_dn = roulette_selection(HEADWAY_POOL_OFFPEAK, weights_dict_offpeak[
+                                       headway_weights_dict[line.line_id, n, 0]))
+                last_selected_headway_indices[(l, n, 0)] = timetable.headway_selected_indices[(l, n, 0)] = selected_id
+
+                headway_dn, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
                     line.line_id, n, 1]) if not is_in_peak_hour else (
                     roulette_selection(HEADWAY_POOL_PEAK,
-                                       weights_dict_peak[line.line_id, n, 1]))
+                                       headway_weights_dict[line.line_id, n, 1]))
+                last_selected_headway_indices[(l, n, 1)] = timetable.headway_selected_indices[(l, n, 1)] = selected_id
                 # add upstream and downstream services
                 while True:
                     added_servs = []
@@ -606,7 +606,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
                                     up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
                                                              SHORT_ROUTE_WEIGHT]
-                                route = roulette_selection(up_route_pool, weights)
+                                route, _ = roulette_selection(up_route_pool, weights)
 
                     if route is not None:
                         first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
@@ -675,7 +675,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                                 weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
                                     dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
                                                              SHORT_ROUTE_WEIGHT]
-                                route = roulette_selection(dn_route_pool, weights)
+                                route, _ = roulette_selection(dn_route_pool, weights)
 
                     if route is not None:
                         first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
@@ -724,29 +724,73 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         delete_services(timetable_net, lines, depots)
 
         # simulate passenger flows and calculate service quality
-        start_time = time.time()
-        # passenger_flow_simulate(timetable_net, lines, passenger_flows)
-        # avg_serv_quality = calculate_service_quality(timetable_net, lines)
-        avg_serv_quality = 0.5
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f"程序执行时间: {execution_time:.4f} 秒")
+        # start_time = time.time()
+        passenger_flow_simulate(timetable_net, lines, passenger_flows)
+        # update last_p_wait_results
+        for l in lines.keys():
+            last_p_wait_results[l] = timetable_net[l].p_wait
+        # calculate level of service
+        avg_serv_quality = calculate_service_quality(timetable_net, lines)
+        # avg_serv_quality = 0.5
+        # end_time = time.time()
+        # execution_time = end_time - start_time
+        # print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
         gen_vehicle_circulation(timetable_net, lines)
 
-        # # generate rolling stock allocation plan
-        # gen_rs_allocation_plan(depots, depots_dep_times, depots_dep_times)
+        # calculate rolling stock cost
+        fleet_size_dict = {}
+        capacity_dict = {}
+        for d, depot in depots.items():
+            fleet_size_dict[d] = depot.maximum_flow
+            capacity_dict[d] = depot.capacity
+
+        # construct the solution
+        solution = {
+            'timetable_net': timetable_net,
+            'fleet_size_dict': fleet_size_dict,
+            'capacity_dict': capacity_dict,
+            'LOS': avg_serv_quality,
+            'COST': sum(fleet_size_dict.values()) / sum(capacity_dict.values())
+        }
+
+        # update headway weights
+        if i > 0:
+            adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results, N)
 
         for depot in depots.values():
             if depot.maximum_flow > depot.capacity:
                 ssda = 0
 
-        timetable_pool.append((timetable_net, avg_serv_quality))
+        if SAVE_ALL_TIMETABLES:
+            solution_pool.append(solution)
+        else:
+            # only save the best solution
+            if len(solution_pool) == 0:
+                solution_pool.append(solution)
+            else:
+                incumbent_solution = solution_pool[0]
+                current_obj = OBJECTIVE_SCALE * (LOS_BIAS * solution['LOS'] + solution['COST'])
+                incumbent_obj = OBJECTIVE_SCALE * (LOS_BIAS * incumbent_solution['LOS'] + incumbent_solution['COST'])
+                if current_obj < incumbent_obj:
+                    solution_pool[0] = solution
+                    print("new incumbent solution!!!")
+                print(f"current: {current_obj:.3f},  incumbent: {incumbent_obj:.3f}\n")
 
-        # export_timetable(root_folder, timetable_net, lines)
+    root_folder = f"./results/"
+    if os.path.exists(root_folder):
+        shutil.rmtree(root_folder)
+        os.mkdir(root_folder)
+    else:
+        os.mkdir(root_folder)
 
-    return timetable_pool
+    for i in range(0, len(solution_pool)):
+        solution_folder = root_folder + f"{i}/"
+        os.mkdir(solution_folder)
+        export_timetable(solution_folder, solution_pool[i]['timetable_net'], lines)
+
+    return solution_pool
 
 
 def roulette_selection(pool, weights=None):
@@ -762,7 +806,7 @@ def roulette_selection(pool, weights=None):
     for i, weight in enumerate(weights):
         cumulative_weight += weight
         if r <= cumulative_weight:
-            return pool[i]
+            return (pool[i], i)
 
     return pool[-1]
 
@@ -1242,12 +1286,6 @@ def gen_vehicle_circulation(timetable_net, lines):
                 serv.has_vehicle = True
 
 
-def gen_rs_allocation_plan(depots, depots_dep_times, depots_arr_times):
-    for depot_id, depot in depots.items():
-        depot_max_flow = calculate_depot_max_flow(depots_dep_times, depots_arr_times, depot_id)
-        depot.maximum_flow = depot_max_flow
-
-
 def process_routes(line, routes, arr_slots, timetable, headway, timespan):
     route_pool = []
     dedicated_turn_back_servs = {}  # key: (route[0],route[-1])   value: (direction, serv_id)
@@ -1551,3 +1589,45 @@ def update_info_after_delete_service(serv_id, timetable, line):
         timetable.up_services.remove(serv_id)
     else:
         timetable.dn_services.remove(serv_id)
+
+
+def check_in_peak_hour(n):
+    return True if (PEAK_HOURS[0][0] <= n < PEAK_HOURS[0][1]) or (PEAK_HOURS[1][0] <= n < PEAK_HOURS[1][1]) \
+        else False
+
+
+def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results,
+                           last_selected_headway_indices):
+    for (l, n, d) in headway_weights_dict.keys():
+        first_slot = n * 60
+        last_slot = (n + TIME_PERIOD) * 60
+        p_wait_dict = timetable_net[l].p_wait
+        p_wait_dict_last = last_p_wait_results[l]
+        max_wait_last = max_wait = 0
+        platforms = lines[l].up_stations if d == 0 else lines[l].dn_stations
+        for sta_id in platforms:
+            # calculate mean_wait_last
+            start_index = bisect.bisect_right(p_wait_dict_last[sta_id], (first_slot, float('inf'), ''))
+            end_index = bisect.bisect_left(p_wait_dict_last[sta_id], (last_slot, float('-inf'), ''))
+            p_wait_values_last = [p_wait_val for (_, p_wait_val, flag) in
+                                  p_wait_dict_last[sta_id][start_index:end_index] if
+                                  flag == 'dep']
+            mean_wait_last = sum(p_wait_values_last) / (len(p_wait_values_last) + SMALL_VALUE)
+            max_wait_last = max(max_wait_last, mean_wait_last)
+
+            # calculate mean_wait
+            start_index = bisect.bisect_right(p_wait_dict[sta_id], (first_slot, float('inf'), ''))
+            end_index = bisect.bisect_left(p_wait_dict[sta_id], (last_slot, float('-inf'), ''))
+            p_wait_values = [p_wait_val for (_, p_wait_val, flag) in p_wait_dict[sta_id][start_index:end_index] if
+                             flag == 'dep']
+            mean_wait = sum(p_wait_values) / (len(p_wait_values) + SMALL_VALUE)
+            max_wait = max(max_wait, mean_wait)
+
+        # adjust headway weight
+        if max_wait < max_wait_last:
+            headway_index = timetable_net[l].headway_selected_indices[(l, n, d)]
+            headway_weights_dict[(l, n, d)][headway_index] += HEADWAY_CHANGE_SCALE
+        elif max_wait > max_wait_last:
+            headway_index = last_selected_headway_indices[(l, n, d)]
+            headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
+            headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 0)

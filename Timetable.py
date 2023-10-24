@@ -21,3 +21,5 @@ class Timetable:
 
         self.turn_back_connections = {}  # key: first_service_of_vehicle, value: consecutive_services_of_vehicle
         self.services_queues = {}  # use physical station id
+
+        self.headway_selected_indices = {}  # the indices of headways that has been selected

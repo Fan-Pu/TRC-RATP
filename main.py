@@ -9,6 +9,6 @@ if __name__ == '__main__':
     read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
-    gen_timetables(100, lines, depots, passenger_flows)
+    gen_timetables(30, lines, depots, passenger_flows)
 
     sdasd = 0
