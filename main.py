@@ -9,6 +9,23 @@ if __name__ == '__main__':
     read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
-    gen_timetables(30, lines, depots, passenger_flows)
+    solution_pool,constant_string,sulotion_summary=gen_timetables(5, lines, depots, passenger_flows)
+
+    root_folder = f"./results/"
+    if os.path.exists(root_folder):
+        shutil.rmtree(root_folder)
+        os.mkdir(root_folder)
+    else:
+        os.mkdir(root_folder)
+
+    for i in range(0, len(solution_pool)):
+        solution_folder = root_folder + f"{i}/"
+        os.mkdir(solution_folder)
+        solution=solution_pool[i]
+        export_timetable(solution_folder, solution['timetable_net'], lines)
+        export_allocation_plan(solution_folder,solution)
+        export_solution_summary(solution_folder, sulotion_summary)
+
+    export_constants(root_folder,constant_string)
 
     sdasd = 0

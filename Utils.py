@@ -18,7 +18,7 @@ from TrainService import *
 import copy
 from sortedcontainers import SortedDict
 
-USE_FIXED_VEHICLE_LINE_MODE = False
+USE_FIXED_VEHICLE_LINE_MODE = True
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -521,8 +521,13 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
 
 def gen_timetables(iter_max, lines, depots, passenger_flows):
     random.seed(2023)
+    sulotion_summary={i:{} for i in range(iter_max)}
 
     solution_pool = list({})
+    constant_string=''
+    for name, value in globals().items():
+        if name.isupper():
+            constant_string += f"{name} = {value}\n"
     # key l,n,d
     headway_weights_dict = {(l, n, d): [INITIAL_HEADWAY_WEIGHT for _ in
                                         (HEADWAY_POOL_PEAK if check_in_peak_hour(n) else HEADWAY_POOL_OFFPEAK)]
@@ -531,6 +536,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
     last_p_wait_results = {l: {} for l in lines.keys()}
     # the indices of headways that has been selected in the last iteration
     last_selected_headway_indices = {(l, n, d): -1 for l in lines.keys() for n in N for d in [0, 1]}
+    start_time = time.time()
     for i in range(0, iter_max):
         print("iter: " + str(i))
         # generate a timetable for the network
@@ -728,17 +734,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
             delete_services_fixed_mode(timetable_net, lines, depots)
 
         # simulate passenger flows and calculate service quality
-        start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
         # update last_p_wait_results
         for l in lines.keys():
             last_p_wait_results[l] = timetable_net[l].p_wait
         # calculate level of service
-        avg_serv_quality = calculate_service_quality(timetable_net, lines)
-        # avg_serv_quality = 0.5
+        avg_serv_quality,total_wait_time = calculate_service_quality(timetable_net, lines)
         end_time = time.time()
         execution_time = end_time - start_time
-        print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
         gen_vehicle_circulation(timetable_net, lines)
@@ -746,11 +749,12 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         # calculate rolling stock cost
         fleet_size_dict = {}
         capacity_dict = {}
+        f_values={(depot.id,l):f_val for depot in depots.values() for l,f_val in depot.f_values.items()}
         for d, depot in depots.items():
             if not USE_FIXED_VEHICLE_LINE_MODE:
                 fleet_size_dict[d] = depot.maximum_flow
             else:
-                fleet_size_dict[d] = sum(depot.f_values)
+                fleet_size_dict[d] = sum(depot.f_values.values())
             capacity_dict[d] = depot.capacity
 
         # construct the solution
@@ -759,9 +763,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
             'fleet_size_dict': fleet_size_dict,
             'capacity_dict': capacity_dict,
             'LOS': avg_serv_quality,
-            'COST': sum(fleet_size_dict.values()) / sum(capacity_dict.values())
+            'COST': sum(fleet_size_dict.values()) / sum(capacity_dict.values()),
+            'objective':0,
+            'total_fleet_size':0,
+            'total_wait_time':total_wait_time,
+            'f_values':f_values
         }
 
+        solution['total_fleet_size']=sum(fleet_size_dict.values())
         # update headway weights
         if i > 0:
             adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results, N)
@@ -769,6 +778,18 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         for depot in depots.values():
             if depot.maximum_flow > depot.capacity:
                 ssda = 0
+
+        current_obj = OBJECTIVE_SCALE * (LOS_BIAS * solution['LOS'] + solution['COST'])
+        solution['objective'] = current_obj
+
+        summary=sulotion_summary[i]
+        summary['time']=execution_time
+        summary['incumbent']=False
+        summary['objective']=solution['objective']
+        summary['LOS'] = solution['LOS']
+        summary['COST'] = solution['COST']
+        summary['total_fleet_size'] = solution['total_fleet_size']
+        summary['total_wait_time'] = solution['total_wait_time']
 
         if SAVE_ALL_TIMETABLES:
             solution_pool.append(solution)
@@ -778,26 +799,14 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 solution_pool.append(solution)
             else:
                 incumbent_solution = solution_pool[0]
-                current_obj = OBJECTIVE_SCALE * (LOS_BIAS * solution['LOS'] + solution['COST'])
                 incumbent_obj = OBJECTIVE_SCALE * (LOS_BIAS * incumbent_solution['LOS'] + incumbent_solution['COST'])
                 if current_obj < incumbent_obj:
                     solution_pool[0] = solution
                     print("new incumbent solution!!!")
+                    summary['incumbent']=True
                 print(f"current: {current_obj:.3f},  incumbent: {incumbent_obj:.3f}\n")
 
-    root_folder = f"./results/"
-    if os.path.exists(root_folder):
-        shutil.rmtree(root_folder)
-        os.mkdir(root_folder)
-    else:
-        os.mkdir(root_folder)
-
-    for i in range(0, len(solution_pool)):
-        solution_folder = root_folder + f"{i}/"
-        os.mkdir(solution_folder)
-        export_timetable(solution_folder, solution_pool[i]['timetable_net'], lines)
-
-    return solution_pool
+    return solution_pool,constant_string,sulotion_summary
 
 
 def roulette_selection(pool, weights=None):
@@ -861,6 +870,42 @@ def export_timetable(folder, timetable_net, lines):
             writer = csv.writer(file)
             writer.writerows(csv_data)
 
+
+def export_allocation_plan(folder,solution):
+    file_path = folder + "z_values.csv"
+    file_data = [[d,z_value]
+        for d, z_value in solution['fleet_size_dict'].items()]
+    with open(file_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(
+            ['depot', 'z_value'])
+        writer.writerows(file_data)
+
+    if USE_FIXED_VEHICLE_LINE_MODE:
+        file_path = folder + "f_values.csv"
+        file_data = [[d,l, f_val] for (d,l), f_val in solution['f_values'].items()]
+        with open(file_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                ['depot','line', 'f_value'])
+            writer.writerows(file_data)
+
+
+def export_solution_summary(solution_folder,solution_summary):
+    summary_file=solution_folder+"process.csv"
+    summary_data=[[i,summary['time'],1 if summary['incumbent'] else 0, summary['objective'], summary['LOS'], summary['COST'],
+                   summary['total_fleet_size'], summary['total_wait_time']]
+                  for i,summary in solution_summary.items()]
+    with open(summary_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['iter', 'time','is_incumbent','objective','LOS','COST','total_fleet_size','total_wait_time'])
+        writer.writerows(summary_data)
+
+
+def export_constants(folder,constant_string):
+    constant_file_path=folder+"constant.txt"
+    with open(constant_file_path, mode="w") as file:
+        file.write(constant_string)
 
 def passenger_flow_simulate(timetable_net, lines, passenger_flows):
     arrive_slots = defaultdict(list)
@@ -1031,6 +1076,7 @@ def passenger_flow_simulate(timetable_net, lines, passenger_flows):
 
 def calculate_service_quality(timetable_net, lines):
     service_quality = 0
+    total_wait_time=0
     for l, timetable in timetable_net.items():
         line = lines[l]
         for sta_id, wait_list in timetable.p_wait.items():
@@ -1055,8 +1101,9 @@ def calculate_service_quality(timetable_net, lines):
         temp_serv_quality = (timetable.sum_wait_time - timetable.sum_wait_time_min) / (
                 timetable.sum_wait_time_max - timetable.sum_wait_time_min
         )
+        total_wait_time +=timetable.sum_wait_time
         service_quality += temp_serv_quality
-    return service_quality / len(lines)
+    return service_quality / len(lines),total_wait_time
 
 
 def gen_vehicle_circulation(timetable_net, lines):
@@ -1663,8 +1710,7 @@ def check_in_peak_hour(n):
         else False
 
 
-def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results,
-                           last_selected_headway_indices):
+def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results,last_selected_headway_indices):
     for (l, n, d) in headway_weights_dict.keys():
         first_slot = n * 60
         last_slot = (n + TIME_PERIOD) * 60
