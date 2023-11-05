@@ -9,3 +9,4 @@ class Depot:
         self.runtime = {}  # key (line_id,station_id)
         self.capacity = 0
         self.maximum_flow = 0
+        self.f_values = {}  # key: line_id

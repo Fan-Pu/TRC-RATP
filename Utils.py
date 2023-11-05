@@ -18,6 +18,8 @@ from TrainService import *
 import copy
 from sortedcontainers import SortedDict
 
+USE_FIXED_VEHICLE_LINE_MODE = False
+
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
 END_TIME = 24 * 60
@@ -218,9 +220,8 @@ def read_depots(folder_path, lines):
                 depot.conn_stations[int(conn_line_id)].append(int(conn_station_id))
                 reverse_station_id = 2 * len(lines[conn_line_id].up_stations) - int(conn_station_id) - 1
                 depot.conn_stations[int(conn_line_id)].append(reverse_station_id)
-                depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(
-                    runtime
-                )
+                depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(runtime)
+                depot.f_values = {i: 0 for i in depot.conn_lines}
         depots[depot_id] = depot
 
     return depots
@@ -721,10 +722,13 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         break  # breaks the While loop
 
         # delete services when depot capacity is reached
-        delete_services(timetable_net, lines, depots)
+        if not USE_FIXED_VEHICLE_LINE_MODE:
+            delete_services(timetable_net, lines, depots)
+        else:
+            delete_services_fixed_mode(timetable_net, lines, depots)
 
         # simulate passenger flows and calculate service quality
-        # start_time = time.time()
+        start_time = time.time()
         passenger_flow_simulate(timetable_net, lines, passenger_flows)
         # update last_p_wait_results
         for l in lines.keys():
@@ -732,9 +736,9 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         # calculate level of service
         avg_serv_quality = calculate_service_quality(timetable_net, lines)
         # avg_serv_quality = 0.5
-        # end_time = time.time()
-        # execution_time = end_time - start_time
-        # print(f"程序执行时间: {execution_time:.4f} 秒")
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"程序执行时间: {execution_time:.4f} 秒")
 
         # generate vehicle circulations
         gen_vehicle_circulation(timetable_net, lines)
@@ -743,7 +747,10 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         fleet_size_dict = {}
         capacity_dict = {}
         for d, depot in depots.items():
-            fleet_size_dict[d] = depot.maximum_flow
+            if not USE_FIXED_VEHICLE_LINE_MODE:
+                fleet_size_dict[d] = depot.maximum_flow
+            else:
+                fleet_size_dict[d] = sum(depot.f_values)
             capacity_dict[d] = depot.capacity
 
         # construct the solution
@@ -1519,8 +1526,6 @@ def delete_services(timetable_net, lines, depots):
             if action == 'dep':
                 current_flow[depot_id] += 1
             else:
-                if line_id == '1':
-                    sdas = 0
                 current_flow[depot_id] -= 1
             if current_flow[depot_id] > depot.capacity:
                 # cancel the service, retrieve the flow
@@ -1558,6 +1563,68 @@ def delete_services(timetable_net, lines, depots):
                 update_info_after_delete_service(serv_id, timetable, line)
             # update the maximum flow
             depot.maximum_flow = max(depot.maximum_flow, current_flow[depot_id])
+
+
+def delete_services_fixed_mode(timetable_net, lines, depots):
+    depot_slot_sequence = defaultdict(list)
+    for line_id, timetable in timetable_net.items():
+        for service in timetable.services.values():
+            if service.from_depot_id != -1:
+                depot_id = service.from_depot_id
+                depot_slot_sequence[service.arrs[0]].append((depot_id, line_id, service.id, 'dep'))
+            if service.to_depot_id != -1:
+                depot_id = service.to_depot_id
+                depot_slot_sequence[service.deps[-1]].append((depot_id, line_id, service.id, 'arr'))
+
+    current_f_dl = {(int(depot.id), i): 0 for depot in depots.values() for i in depot.conn_lines}
+    depot_slot_sequence = dict(sorted(depot_slot_sequence.items()))
+
+    for t, sequence in depot_slot_sequence.items():
+        random.shuffle(sequence)
+        for depot_id, line_id, serv_id, action in sequence:
+            depot = depots[str(depot_id)]
+            temp_key = (depot_id, int(line_id))
+            if action == 'dep':
+                current_f_dl[temp_key] += 1
+            else:
+                current_f_dl[temp_key] -= 1
+            sum_depot_flow = sum([value for key, value in current_f_dl.items() if key[0] == depot_id])
+            if sum_depot_flow > depot.capacity:
+                # cancel the service, retrieve the flow
+                current_f_dl[temp_key] -= 1
+                timetable = timetable_net[line_id]
+                service = timetable.services[serv_id]
+                line = lines[service.line_id]
+                # if it has a following service, delete them together
+                if service.next_service != -1:
+                    # delete the following service from depot_slot_sequence
+                    dep_t = timetable.services[service.next_service].arrs[0]
+                    arr_t = timetable.services[service.next_service].deps[-1]
+                    if dep_t in depot_slot_sequence.keys():
+                        depot_slot_sequence[dep_t] = [x for x in depot_slot_sequence[dep_t] if
+                                                      x[2] != service.next_service]
+                    if arr_t in depot_slot_sequence.keys():
+                        depot_slot_sequence[arr_t] = [x for x in depot_slot_sequence[arr_t] if
+                                                      x[2] != service.next_service]
+                    # delete service.next_service from timetable.services_queues
+                    update_info_after_delete_service(service.next_service, timetable, line)
+
+                # if it has a preceding service, delete them together
+                if timetable.services[serv_id].front_service != -1:
+                    # delete the preceding service from depot_slot_sequence
+                    dep_t = timetable.services[service.front_service].arrs[0]
+                    arr_t = timetable.services[service.front_service].deps[-1]
+                    depot_slot_sequence[dep_t] = [x for x in depot_slot_sequence[dep_t] if
+                                                  x[2] != service.front_service]
+                    depot_slot_sequence[arr_t] = [x for x in depot_slot_sequence[arr_t] if
+                                                  x[2] != service.front_service]
+                    # delete service.front_service from timetable.services_queues
+                    update_info_after_delete_service(service.front_service, timetable, line)
+
+                # delete service from timetable.services_queues
+                update_info_after_delete_service(serv_id, timetable, line)
+            # update the maximum flow
+            depot.f_values[int(line_id)] = max(depot.f_values[int(line_id)], current_f_dl[temp_key])
 
 
 def update_info_after_delete_service(serv_id, timetable, line):
