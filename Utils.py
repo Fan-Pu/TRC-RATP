@@ -47,6 +47,8 @@ SMALL_VALUE = 0.0000001
 OBJECTIVE_SCALE = 100
 LOS_BIAS = 100
 REFRESH_THRESHOLD = 2000
+MAX_PROB = 0.9
+MIN_PROB = 0.05
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -539,6 +541,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
     last_selected_headway_indices = {(l, n, d): -1 for l in lines.keys() for n in N for d in [0, 1]}
     start_time = time.time()
     refresh_counter = 0
+    fixed_headway_idx_dict = None  # key (l, n, d)
     for i in range(0, iter_max):
         print("iter: " + str(i))
         # generate a timetable for the network
@@ -568,23 +571,31 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                         else:
                             timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
                 start_time_secs = time_span[0] * 60
-                headway_up, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
-                    line.line_id, n, 0]) if not is_in_peak_hour else (
-                    roulette_selection(HEADWAY_POOL_PEAK,
-                                       headway_weights_dict[line.line_id, n, 0]))
+                if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 0)] != -1:
+                    selected_id = fixed_headway_idx_dict[(l, n, 0)]
+                    headway_up = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
+                        else HEADWAY_POOL_OFFPEAK[selected_id]
+                else:
+                    headway_up, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
+                        line.line_id, n, 0]) if not is_in_peak_hour else (
+                        roulette_selection(HEADWAY_POOL_PEAK,
+                                           headway_weights_dict[line.line_id, n, 0]))
                 last_selected_headway_indices[(l, n, 0)] = timetable.headway_selected_indices[(l, n, 0)] = selected_id
 
-                headway_dn, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
-                    line.line_id, n, 1]) if not is_in_peak_hour else (
-                    roulette_selection(HEADWAY_POOL_PEAK,
-                                       headway_weights_dict[line.line_id, n, 1]))
+                if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 1)] != -1:
+                    selected_id = fixed_headway_idx_dict[(l, n, 1)]
+                    headway_dn = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
+                        else HEADWAY_POOL_OFFPEAK[selected_id]
+                else:
+                    headway_dn, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
+                        line.line_id, n, 1]) if not is_in_peak_hour else (
+                        roulette_selection(HEADWAY_POOL_PEAK,
+                                           headway_weights_dict[line.line_id, n, 1]))
                 last_selected_headway_indices[(l, n, 1)] = timetable.headway_selected_indices[(l, n, 1)] = selected_id
                 # add upstream and downstream services
                 while True:
                     added_servs = []
                     # upstream *******************
-                    if l == '3':
-                        sdds = 0
                     up_route_pool, dedicated_turn_back_servs, desired_arr_times = (
                         process_routes(line, line.up_routes, arr_slots,
                                        timetable, headway_up, time_span))
@@ -797,8 +808,9 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                 print(f"current: {current_obj:.3f},  incumbent: {incumbent_obj:.3f}\n")
 
         # update headway weights
-        if i > 0 and refresh_counter == REFRESH_THRESHOLD:
-            adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results)
+        if i > 0:
+            fixed_headway_idx_dict = adjust_headway_weights(headway_weights_dict, lines, timetable_net,
+                                                            last_p_wait_results)
 
         # update last_p_wait_results (this must be executed after adjust_headway_weights)
         for l in lines.keys():
@@ -1712,7 +1724,9 @@ def check_in_peak_hour(n):
 
 
 def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wait_results):
+    fixed_headway_idx_dict = {}  # determine whether the headway should be fixed. key=(l,n,d)
     for (l, n, d) in headway_weights_dict.keys():
+        fixed_headway_idx_dict[(l, n, d)] = -1
         first_slot = n * 60
         last_slot = (n + TIME_PERIOD) * 60
         p_wait_dict = timetable_net[l].p_wait
@@ -1744,15 +1758,36 @@ def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wa
         headway_index = timetable_net[l].headway_selected_indices[(l, n, d)]
         if sum_wait < sum_wait_last:
             headway_weights_dict[(l, n, d)][headway_index] += HEADWAY_CHANGE_SCALE
-        # elif sum_wait > sum_wait_last:
-        #     headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
-        #     headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 0)
+            fixed_headway_idx_dict[(l, n, d)] = headway_index
+        elif sum_wait == sum_wait_last:
+            fixed_headway_idx_dict[(l, n, d)] = headway_index
+        elif sum_wait > sum_wait_last:
+            headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
+            headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 1)
+
+        regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
 
         # if max_wait < max_wait_last:
         #     headway_weights_dict[(l, n, d)][headway_index] += HEADWAY_CHANGE_SCALE
         # elif max_wait > max_wait_last:
         #     headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
         #     headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 0)
+    return fixed_headway_idx_dict
+
+
+def regulate_weights(weights, max_prob, min_prob):
+    '''bound the probobility of selecting each eliment to min_prob and max_prob'''
+    n = len(weights)
+    weights = [max(min(weight, max_prob), min_prob) for weight in weights]
+
+    # scale the total weights to 1
+    total_weight = sum(weights)
+    if total_weight != 0:
+        weights = [weight / total_weight for weight in weights]
+    else:
+        weights = [1 / n for _ in range(n)]
+
+    return weights
 
 
 def refresh_roulette_weights(headway_weights_dict):
