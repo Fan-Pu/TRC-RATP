@@ -18,7 +18,7 @@ from TrainService import *
 import copy
 from sortedcontainers import SortedDict
 
-USE_FIXED_VEHICLE_LINE_MODE = True
+USE_FIXED_VEHICLE_LINE_MODE = False
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -46,7 +46,7 @@ SAVE_ALL_TIMETABLES = False
 SMALL_VALUE = 0.0000001
 OBJECTIVE_SCALE = 100
 LOS_BIAS = 100
-REFRESH_THRESHOLD = 2000
+REFRESH_THRESHOLD = 50
 MAX_PROB = 0.9
 MIN_PROB = 0.05
 
@@ -742,7 +742,7 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
 
         # delete services when depot capacity is reached
         if not USE_FIXED_VEHICLE_LINE_MODE:
-            delete_services(timetable_net, lines, depots)
+            delete_services(timetable_net, lines, depots, passenger_flows)
         else:
             delete_services_fixed_mode(timetable_net, lines, depots)
 
@@ -1565,7 +1565,7 @@ def calculate_depot_max_flow(depots_dep_times, depots_arr_times, depot_id):
     return max_depot_flow
 
 
-def delete_services(timetable_net, lines, depots):
+def delete_services(timetable_net, lines, depots, passenger_flows):
     depot_slot_sequence = defaultdict(list)
     for line_id, timetable in timetable_net.items():
         for service in timetable.services.values():
@@ -1578,9 +1578,29 @@ def delete_services(timetable_net, lines, depots):
 
     current_flow = {int(i): 0 for i in depots.keys()}
     depot_slot_sequence = dict(sorted(depot_slot_sequence.items()))
-    # 尝试按照客流强度对 sequence 再排序
+
     for t, sequence in depot_slot_sequence.items():
-        random.shuffle(sequence)
+        # random.shuffle(sequence)
+        # rank services according to passenger flow density (arrive rate)
+        sequence_weights = []
+        sequence = [(depot_id, line_id, serv_id, action) for (depot_id, line_id, serv_id, action) in sequence if
+                    serv_id in timetable_net[line_id].services.keys()]
+        for depot_id, line_id, serv_id, action in sequence:
+            service = timetable_net[line_id].services[serv_id]
+            volume_density = 0
+            for i in range(0, len(service.route)):
+                station_id = service.route[i]
+                arr_t = service.arrs[i]
+                volume_density += passenger_flows.d[
+                    int(line_id), station_id, round((arr_t / 60 - START_TIME) / INTERVAL)]
+            sequence_weights.append(volume_density)
+        # Combine elements with their corresponding weights
+        combined = zip(sequence_weights, sequence)
+        # Sort based on weights
+        sorted_combined = sorted(combined)
+        # Unpack the sorted combinations to get the sorted sequence
+        sequence = [item[1] for item in sorted_combined]
+
         for depot_id, line_id, serv_id, action in sequence:
             depot = depots[str(depot_id)]
             if action == 'dep':
