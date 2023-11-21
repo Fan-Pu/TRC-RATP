@@ -1792,7 +1792,8 @@ def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wa
         # elif max_wait > max_wait_last:
         #     headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
         #     headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 0)
-    return fixed_headway_idx_dict
+    # return fixed_headway_idx_dict
+    return None
 
 
 def regulate_weights(weights, max_prob, min_prob):
