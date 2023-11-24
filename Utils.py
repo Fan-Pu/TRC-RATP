@@ -18,7 +18,7 @@ from TrainService import *
 import copy
 from sortedcontainers import SortedDict
 
-USE_FIXED_VEHICLE_LINE_MODE = False
+USE_FIXED_VEHICLE_LINE_MODE = True
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -45,10 +45,12 @@ HEADWAY_CHANGE_SCALE = 20
 SAVE_ALL_TIMETABLES = False
 SMALL_VALUE = 0.0000001
 OBJECTIVE_SCALE = 100
-LOS_BIAS = 100
+LOS_BIAS = 1.2
 REFRESH_THRESHOLD = 50
 MAX_PROB = 0.9
 MIN_PROB = 0.05
+MIN_WAIT_TIME = 0.9e12
+MAX_WAIT_TIME = 1.1e12
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -811,6 +813,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         if i > 0:
             fixed_headway_idx_dict = adjust_headway_weights(headway_weights_dict, lines, timetable_net,
                                                             last_p_wait_results)
+            for (l, n, d) in headway_weights_dict.keys():
+                regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
 
         # update last_p_wait_results (this must be executed after adjust_headway_weights)
         for l in lines.keys():
@@ -1116,7 +1120,9 @@ def calculate_service_quality(timetable_net, lines):
         )
         total_wait_time += timetable.sum_wait_time
         service_quality += temp_serv_quality
-    return service_quality / len(lines), total_wait_time
+
+    # return service_quality / len(lines), total_wait_time
+    return (total_wait_time - MIN_WAIT_TIME) / (MAX_WAIT_TIME - MIN_WAIT_TIME), total_wait_time
 
 
 def gen_vehicle_circulation(timetable_net, lines):
@@ -1785,15 +1791,13 @@ def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wa
             headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
             headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 1)
 
-        regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
-
         # if max_wait < max_wait_last:
         #     headway_weights_dict[(l, n, d)][headway_index] += HEADWAY_CHANGE_SCALE
         # elif max_wait > max_wait_last:
         #     headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
         #     headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 0)
-    # return fixed_headway_idx_dict
-    return None
+    return fixed_headway_idx_dict
+    # return None
 
 
 def regulate_weights(weights, max_prob, min_prob):

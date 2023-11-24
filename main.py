@@ -9,7 +9,7 @@ if __name__ == '__main__':
     read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
-    solution_pool, constant_string, solution_summary = gen_timetables(500, lines, depots, passenger_flows)
+    solution_pool, constant_string, solution_summary = gen_timetables(200, lines, depots, passenger_flows)
 
     root_folder = f"./results/"
     if os.path.exists(root_folder):
