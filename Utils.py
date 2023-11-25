@@ -530,7 +530,6 @@ def read_transfer_rates(folder_path, lines, passenger_flows):
 def gen_timetables(iter_max, lines, depots, passenger_flows):
     random.seed(2023)
     solution_summary = {i: {} for i in range(iter_max)}
-    solution_pool = list({})
     constant_string = ''
     for name, value in globals().items():
         if name.isupper():
@@ -547,9 +546,9 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
     incumbent_solution = None
     previous_solution = None
     local_objective_values = {}
-    is_incumbent = False
     for i in range(0, iter_max):
         print("iter: " + str(i))
+        is_incumbent = False
 
         # initial solution
         if i == 0:
@@ -593,6 +592,8 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
         summary['COST'] = local_best_solution['COST']
         summary['total_fleet_size'] = local_best_solution['total_fleet_size']
         summary['total_wait_time'] = local_best_solution['total_wait_time']
+        summary['min_local_obj'] = min(local_objective_values[i])
+        summary['max_local_obj'] = max(local_objective_values[i])
 
     return incumbent_solution, constant_string, solution_summary
 
