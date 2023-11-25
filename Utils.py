@@ -51,6 +51,8 @@ MAX_PROB = 0.9
 MIN_PROB = 0.05
 MIN_WAIT_TIME = 0.9e12
 MAX_WAIT_TIME = 1.1e12
+NEIGHBORHOOD_SIZE = 10
+ENABLE_NEIGHBORHOOD_SEARCH = True
 
 # model parameters
 TIME_PERIOD = 60  # 1 hour
@@ -539,288 +541,60 @@ def gen_timetables(iter_max, lines, depots, passenger_flows):
                             for l in lines.keys() for n in N for d in [0, 1]}
     # the p_wait result of the last passenger simulation
     last_p_wait_results = {l: {} for l in lines.keys()}
-    # the indices of headway that has been selected in the last iteration
-    last_selected_headway_indices = {(l, n, d): -1 for l in lines.keys() for n in N for d in [0, 1]}
     start_time = time.time()
     refresh_counter = 0
     fixed_headway_idx_dict = None  # key (l, n, d)
+    incumbent_solution = None
+    previous_solution = None
+    local_objective_values = {}
+    is_incumbent = False
     for i in range(0, iter_max):
         print("iter: " + str(i))
-        # generate a timetable for the network
-        timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
 
-        arr_slots = {}  # key:(l,sta_id), the last arrive time of each station
-        for l, line in lines.items():
-            for sta_id in line.up_stations + line.dn_stations:
-                arr_slots[l, sta_id] = START_TIME * 60
-
-        service_nums = {l: 0 for l in lines.keys()}
-        last_routes = {(line_id, dir_id): (None, None) for line_id in lines.keys()
-                       for dir_id in [0, 1]}  # key: (line_id,direction) value: (sta_start,sta_end)
-
-        # for each time window
-        for n in N:
-            is_in_peak_hour = check_in_peak_hour(n)
-            time_span = [k for k in range(n, n + TIME_PERIOD)]
-
-            for l, line in lines.items():  # for each line
-                timetable = timetable_net[l]
-                for route in line.routes:
-                    for sta_id in [route[0], route[-1]]:
-                        if not line.is_loop_line:
-                            physical_sta_id = min(sta_id, 2 * len(line.up_stations) - 1 - sta_id)
-                            timetable.services_queues.setdefault(physical_sta_id, {"from": [], "to": []})
-                        else:
-                            timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
-                start_time_secs = time_span[0] * 60
-                if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 0)] != -1:
-                    selected_id = fixed_headway_idx_dict[(l, n, 0)]
-                    headway_up = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
-                        else HEADWAY_POOL_OFFPEAK[selected_id]
-                else:
-                    headway_up, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
-                        line.line_id, n, 0]) if not is_in_peak_hour else (
-                        roulette_selection(HEADWAY_POOL_PEAK,
-                                           headway_weights_dict[line.line_id, n, 0]))
-                last_selected_headway_indices[(l, n, 0)] = timetable.headway_selected_indices[(l, n, 0)] = selected_id
-
-                if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 1)] != -1:
-                    selected_id = fixed_headway_idx_dict[(l, n, 1)]
-                    headway_dn = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
-                        else HEADWAY_POOL_OFFPEAK[selected_id]
-                else:
-                    headway_dn, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
-                        line.line_id, n, 1]) if not is_in_peak_hour else (
-                        roulette_selection(HEADWAY_POOL_PEAK,
-                                           headway_weights_dict[line.line_id, n, 1]))
-                last_selected_headway_indices[(l, n, 1)] = timetable.headway_selected_indices[(l, n, 1)] = selected_id
-                # add upstream and downstream services
-                while True:
-                    added_servs = []
-                    # upstream *******************
-                    up_route_pool, dedicated_turn_back_servs, desired_arr_times = (
-                        process_routes(line, line.up_routes, arr_slots,
-                                       timetable, headway_up, time_span))
-                    # select route: if full-length and short-length routes are all available
-                    # (1) peak hour: alternatively select these routes
-                    # (2) off-peak hour: only select full-length route
-                    # if only one route: select this route
-                    # if no available routes: skip
-
-                    # select route from upstream available routes
-                    route = up_route_pool[0] if len(up_route_pool) == 1 else None
-                    if len(up_route_pool) > 0:
-                        if not line.is_loop_line:
-                            if len(up_route_pool) > 1:
-                                # alternatively select
-                                if is_in_peak_hour:
-                                    route = up_route_pool[0] if \
-                                        (last_routes[line.line_id, 0] != (up_route_pool[0][0], up_route_pool[0][-1])) \
-                                        else up_route_pool[-1]
-                                # only select full-length route
-                                else:
-                                    route = up_route_pool[0] if \
-                                        (up_route_pool[0][0], up_route_pool[0][-1]) == (
-                                            line.up_stations[0], line.up_stations[-1]) else up_route_pool[-1]
-                        # loop line
-                        else:
-                            if len(up_route_pool) > 1:
-                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
-                                    up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                             SHORT_ROUTE_WEIGHT]
-                                route, _ = roulette_selection(up_route_pool, weights)
-
-                    if route is not None:
-                        first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
-                        if (route[0], route[-1]) in desired_arr_times.keys():
-                            first_arr_time = desired_arr_times[(route[0], route[-1])]
-                        service, valid = construct_service(route, service_nums, 0, line, first_arr_time, time_span,
-                                                           timetable, arr_slots)
-                        if valid:
-                            # save the info of connecting depots for this service
-                            for term_sta in [route[0], route[-1]]:
-                                if term_sta in line.stations_conn_depots.keys():
-                                    if term_sta == route[0]:
-                                        service.from_depot_id = line.stations_conn_depots[term_sta]
-                                    if term_sta == route[-1]:
-                                        service.to_depot_id = line.stations_conn_depots[term_sta]
-
-                            added_servs.append(service)
-                            last_routes[line.line_id, 0] = (route[0], route[-1])
-                            # update turn-back connections
-                            if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
-                                direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
-                                if direction == 'from':
-                                    service.front_service = serv_id
-                                    timetable.services[serv_id].next_service = service.id
-                                else:
-                                    service.next_service = serv_id
-                                    timetable.services[serv_id].front_service = service.id
-                            # update timetable.services_queues
-                            if service.front_service == -1:
-                                if not line.is_loop_line:
-                                    physical_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
-                                    timetable.services_queues[physical_sta_id]['to'].append(service.id)
-                                else:
-                                    timetable.services_queues[route[0]]['to'].append(service.id)
-                            if service.next_service == -1:
-                                if not line.is_loop_line:
-                                    physical_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
-                                    timetable.services_queues[physical_sta_id]['from'].append(service.id)
-                                else:
-                                    timetable.services_queues[route[-1]]['from'].append(service.id)
-
-                    # downstream ********************
-                    dn_route_pool, dedicated_turn_back_servs, desired_arr_times = (
-                        process_routes(line, line.dn_routes, arr_slots,
-                                       timetable, headway_dn, time_span))
-
-                    # select route from downstream available routes
-                    route = dn_route_pool[0] if len(dn_route_pool) == 1 else None
-                    if len(dn_route_pool) > 0:
-                        if not line.is_loop_line:
-                            if len(dn_route_pool) > 1:
-                                # alternatively select
-                                if is_in_peak_hour:
-                                    route = dn_route_pool[0] if \
-                                        (last_routes[line.line_id, 1] != (
-                                            dn_route_pool[0][0], dn_route_pool[0][-1])) \
-                                        else dn_route_pool[-1]
-                                # only select full-length route
-                                else:
-                                    route = dn_route_pool[0] if \
-                                        (dn_route_pool[0][0], dn_route_pool[0][-1]) == (
-                                            line.dn_stations[0], line.dn_stations[-1]) else dn_route_pool[-1]
-                        # loop line
-                        else:
-                            if len(dn_route_pool) > 1:
-                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
-                                    dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                             SHORT_ROUTE_WEIGHT]
-                                route, _ = roulette_selection(dn_route_pool, weights)
-
-                    if route is not None:
-                        first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
-                        if (route[0], route[-1]) in desired_arr_times.keys():
-                            first_arr_time = desired_arr_times[(route[0], route[-1])]
-                        service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
-                                                           timetable, arr_slots)
-                        if valid:
-                            # save the info of connecting depots for this service
-                            for term_sta in [route[0], route[-1]]:
-                                if term_sta in line.stations_conn_depots.keys():
-                                    if term_sta == route[0]:
-                                        service.from_depot_id = line.stations_conn_depots[term_sta]
-                                    if term_sta == route[-1]:
-                                        service.to_depot_id = line.stations_conn_depots[term_sta]
-
-                            added_servs.append(service)
-                            last_routes[line.line_id, 1] = (route[0], route[-1])
-                            # update turn-back connections
-                            if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
-                                direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
-                                if direction == 'from':
-                                    service.front_service = serv_id
-                                    timetable.services[serv_id].next_service = service.id
-                                else:
-                                    service.next_service = serv_id
-                                    timetable.services[serv_id].front_service = service.id
-                            # update timetable.services_queues
-                            if service.front_service == -1:
-                                if not line.is_loop_line:
-                                    physical_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
-                                    timetable.services_queues[physical_sta_id]['to'].append(service.id)
-                                else:
-                                    timetable.services_queues[route[0]]['to'].append(service.id)
-                            if service.next_service == -1:
-                                if not line.is_loop_line:
-                                    physical_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
-                                    timetable.services_queues[physical_sta_id]['from'].append(service.id)
-                                else:
-                                    timetable.services_queues[route[-1]]['from'].append(service.id)
-
-                    if len(added_servs) == 0:
-                        break  # breaks the While loop
-
-        # delete services when depot capacity is reached
-        if not USE_FIXED_VEHICLE_LINE_MODE:
-            delete_services(timetable_net, lines, depots, passenger_flows)
+        # initial solution
+        if i == 0:
+            solution = local_search(lines, fixed_headway_idx_dict, headway_weights_dict, depots, passenger_flows)
+            incumbent_solution = previous_solution = local_best_solution = solution
+            is_incumbent = True
         else:
-            delete_services_fixed_mode(timetable_net, lines, depots)
+            solution = local_search(lines, fixed_headway_idx_dict, headway_weights_dict, depots, passenger_flows)
+            if solution['objective'] < incumbent_solution['objective']:
+                incumbent_solution = solution
+                is_incumbent = True
 
-        # simulate passenger flows and calculate service quality
-        passenger_flow_simulate(timetable_net, lines, passenger_flows)
-        # calculate level of service
-        avg_serv_quality, total_wait_time = calculate_service_quality(timetable_net, lines)
-        end_time = time.time()
-        execution_time = end_time - start_time
+            # fixed_headway_idx_dict and headway_weights_dict are updated
+            print('solution is shaken. ')
+            shake_solution(lines, fixed_headway_idx_dict, headway_weights_dict, previous_solution, solution)
 
-        # generate vehicle circulations
-        gen_vehicle_circulation(timetable_net, lines)
+            # local search. fixed_headway_idx_dict and headway_weights_dict do not change
+            print('start local search:\n')
+            local_best_solution = solution
+            local_objective_values[i] = []
+            for j in range(NEIGHBORHOOD_SIZE):
+                local_solution = local_search(lines, fixed_headway_idx_dict, headway_weights_dict, depots,
+                                              passenger_flows)
+                local_objective_values[i].append(local_solution['objective'])
+                # local best solution updates the incumbent_solution
+                if local_solution['objective'] < incumbent_solution['objective']:
+                    incumbent_solution = local_solution
+                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!\n")
+                    is_incumbent = True
 
-        # calculate rolling stock cost
-        fleet_size_dict = {}
-        capacity_dict = {}
-        f_values = {(depot.id, l): f_val for depot in depots.values() for l, f_val in depot.f_values.items()}
-        for d, depot in depots.items():
-            if not USE_FIXED_VEHICLE_LINE_MODE:
-                fleet_size_dict[d] = depot.maximum_flow
-            else:
-                fleet_size_dict[d] = sum(depot.f_values.values())
-            capacity_dict[d] = depot.capacity
-
-        # construct the solution
-        solution = {'timetable_net': timetable_net, 'fleet_size_dict': fleet_size_dict, 'capacity_dict': capacity_dict,
-                    'LOS': avg_serv_quality, 'COST': sum(fleet_size_dict.values()) / sum(capacity_dict.values()),
-                    'objective': 0, 'total_fleet_size': sum(fleet_size_dict.values()),
-                    'total_wait_time': total_wait_time, 'f_values': f_values}
-
-        for depot in depots.values():
-            if depot.maximum_flow > depot.capacity:
-                ssda = 0
-
-        current_obj = OBJECTIVE_SCALE * (LOS_BIAS * solution['LOS'] + solution['COST'])
-        solution['objective'] = current_obj
+                if local_solution['objective'] < local_best_solution['objective']:
+                    local_best_solution = local_solution
+            previous_solution = local_best_solution
+        print(f"current: {local_best_solution['objective']:.3f}, incumbent: {incumbent_solution['objective']:.3f}\n")
 
         summary = solution_summary[i]
-        summary['time'] = execution_time
-        summary['incumbent'] = False
-        summary['objective'] = solution['objective']
-        summary['LOS'] = solution['LOS']
-        summary['COST'] = solution['COST']
-        summary['total_fleet_size'] = solution['total_fleet_size']
-        summary['total_wait_time'] = solution['total_wait_time']
+        summary['time'] = time.time() - start_time
+        summary['incumbent'] = is_incumbent
+        summary['objective'] = local_best_solution['objective']
+        summary['LOS'] = local_best_solution['LOS']
+        summary['COST'] = local_best_solution['COST']
+        summary['total_fleet_size'] = local_best_solution['total_fleet_size']
+        summary['total_wait_time'] = local_best_solution['total_wait_time']
 
-        if SAVE_ALL_TIMETABLES:
-            solution_pool.append(solution)
-        else:
-            # only save the best solution
-            if len(solution_pool) == 0:
-                solution_pool.append(solution)
-            else:
-                incumbent_solution = solution_pool[0]
-                incumbent_obj = OBJECTIVE_SCALE * (LOS_BIAS * incumbent_solution['LOS'] + incumbent_solution['COST'])
-                if current_obj < incumbent_obj:
-                    solution_pool[0] = solution
-                    print("new incumbent solution!!!")
-                    summary['incumbent'] = True
-                    refresh_counter = 0
-                else:
-                    refresh_counter += 1
-                print(f"current: {current_obj:.3f},  incumbent: {incumbent_obj:.3f}\n")
-
-        # update headway weights
-        if i > 0:
-            fixed_headway_idx_dict = adjust_headway_weights(headway_weights_dict, lines, timetable_net,
-                                                            last_p_wait_results)
-            for (l, n, d) in headway_weights_dict.keys():
-                regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
-
-        # update last_p_wait_results (this must be executed after adjust_headway_weights)
-        for l in lines.keys():
-            last_p_wait_results[l] = timetable_net[l].p_wait
-
-    return solution_pool, constant_string, solution_summary
+    return incumbent_solution, constant_string, solution_summary
 
 
 def roulette_selection(pool, weights=None):
@@ -1817,3 +1591,250 @@ def regulate_weights(weights, max_prob, min_prob):
 
 def refresh_roulette_weights(headway_weights_dict):
     ssda = 0
+
+
+def local_search(lines, fixed_headway_idx_dict, headway_weights_dict, depots,
+                 passenger_flows):
+    # generate a timetable for the network
+    timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
+
+    arr_slots = {}  # key:(l,sta_id), the last arrive time of each station
+    for l, line in lines.items():
+        for sta_id in line.up_stations + line.dn_stations:
+            arr_slots[l, sta_id] = START_TIME * 60
+
+    service_nums = {l: 0 for l in lines.keys()}
+    last_routes = {(line_id, dir_id): (None, None) for line_id in lines.keys()
+                   for dir_id in [0, 1]}  # key: (line_id,direction) value: (sta_start,sta_end)
+
+    # for each time window
+    for n in N:
+        is_in_peak_hour = check_in_peak_hour(n)
+        time_span = [k for k in range(n, n + TIME_PERIOD)]
+
+        for l, line in lines.items():  # for each line
+            timetable = timetable_net[l]
+            for route in line.routes:
+                for sta_id in [route[0], route[-1]]:
+                    if not line.is_loop_line:
+                        physical_sta_id = min(sta_id, 2 * len(line.up_stations) - 1 - sta_id)
+                        timetable.services_queues.setdefault(physical_sta_id, {"from": [], "to": []})
+                    else:
+                        timetable.services_queues.setdefault(sta_id, {"from": [], "to": []})
+            start_time_secs = time_span[0] * 60
+            if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 0)] != -1:
+                selected_id = fixed_headway_idx_dict[(l, n, 0)]
+                headway_up = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
+                    else HEADWAY_POOL_OFFPEAK[selected_id]
+            else:
+                headway_up, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
+                    line.line_id, n, 0]) if not is_in_peak_hour else (
+                    roulette_selection(HEADWAY_POOL_PEAK,
+                                       headway_weights_dict[line.line_id, n, 0]))
+            timetable.headway_selected_indices[(l, n, 0)] = selected_id
+
+            if fixed_headway_idx_dict is not None and fixed_headway_idx_dict[(l, n, 1)] != -1:
+                selected_id = fixed_headway_idx_dict[(l, n, 1)]
+                headway_dn = HEADWAY_POOL_PEAK[selected_id] if is_in_peak_hour \
+                    else HEADWAY_POOL_OFFPEAK[selected_id]
+            else:
+                headway_dn, selected_id = roulette_selection(HEADWAY_POOL_OFFPEAK, headway_weights_dict[
+                    line.line_id, n, 1]) if not is_in_peak_hour else (
+                    roulette_selection(HEADWAY_POOL_PEAK,
+                                       headway_weights_dict[line.line_id, n, 1]))
+            timetable.headway_selected_indices[(l, n, 1)] = selected_id
+
+            # add upstream and downstream services
+            while True:
+                added_servs = []
+                # upstream *******************
+                up_route_pool, dedicated_turn_back_servs, desired_arr_times = (
+                    process_routes(line, line.up_routes, arr_slots,
+                                   timetable, headway_up, time_span))
+                # select route: if full-length and short-length routes are all available
+                # (1) peak hour: alternatively select these routes
+                # (2) off-peak hour: only select full-length route
+                # if only one route: select this route
+                # if no available routes: skip
+
+                # select route from upstream available routes
+                route = up_route_pool[0] if len(up_route_pool) == 1 else None
+                if len(up_route_pool) > 0:
+                    if not line.is_loop_line:
+                        if len(up_route_pool) > 1:
+                            # alternatively select
+                            if is_in_peak_hour:
+                                route = up_route_pool[0] if \
+                                    (last_routes[line.line_id, 0] != (up_route_pool[0][0], up_route_pool[0][-1])) \
+                                    else up_route_pool[-1]
+                            # only select full-length route
+                            else:
+                                route = up_route_pool[0] if \
+                                    (up_route_pool[0][0], up_route_pool[0][-1]) == (
+                                        line.up_stations[0], line.up_stations[-1]) else up_route_pool[-1]
+                    # loop line
+                    else:
+                        if len(up_route_pool) > 1:
+                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
+                                up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                         SHORT_ROUTE_WEIGHT]
+                            route, _ = roulette_selection(up_route_pool, weights)
+
+                if route is not None:
+                    first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
+                    if (route[0], route[-1]) in desired_arr_times.keys():
+                        first_arr_time = desired_arr_times[(route[0], route[-1])]
+                    service, valid = construct_service(route, service_nums, 0, line, first_arr_time, time_span,
+                                                       timetable, arr_slots)
+                    if valid:
+                        # save the info of connecting depots for this service
+                        for term_sta in [route[0], route[-1]]:
+                            if term_sta in line.stations_conn_depots.keys():
+                                if term_sta == route[0]:
+                                    service.from_depot_id = line.stations_conn_depots[term_sta]
+                                if term_sta == route[-1]:
+                                    service.to_depot_id = line.stations_conn_depots[term_sta]
+
+                        added_servs.append(service)
+                        last_routes[line.line_id, 0] = (route[0], route[-1])
+                        # update turn-back connections
+                        if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
+                            direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
+                            if direction == 'from':
+                                service.front_service = serv_id
+                                timetable.services[serv_id].next_service = service.id
+                            else:
+                                service.next_service = serv_id
+                                timetable.services[serv_id].front_service = service.id
+                        # update timetable.services_queues
+                        if service.front_service == -1:
+                            if not line.is_loop_line:
+                                physical_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
+                                timetable.services_queues[physical_sta_id]['to'].append(service.id)
+                            else:
+                                timetable.services_queues[route[0]]['to'].append(service.id)
+                        if service.next_service == -1:
+                            if not line.is_loop_line:
+                                physical_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
+                                timetable.services_queues[physical_sta_id]['from'].append(service.id)
+                            else:
+                                timetable.services_queues[route[-1]]['from'].append(service.id)
+
+                # downstream ********************
+                dn_route_pool, dedicated_turn_back_servs, desired_arr_times = (
+                    process_routes(line, line.dn_routes, arr_slots,
+                                   timetable, headway_dn, time_span))
+
+                # select route from downstream available routes
+                route = dn_route_pool[0] if len(dn_route_pool) == 1 else None
+                if len(dn_route_pool) > 0:
+                    if not line.is_loop_line:
+                        if len(dn_route_pool) > 1:
+                            # alternatively select
+                            if is_in_peak_hour:
+                                route = dn_route_pool[0] if \
+                                    (last_routes[line.line_id, 1] != (
+                                        dn_route_pool[0][0], dn_route_pool[0][-1])) \
+                                    else dn_route_pool[-1]
+                            # only select full-length route
+                            else:
+                                route = dn_route_pool[0] if \
+                                    (dn_route_pool[0][0], dn_route_pool[0][-1]) == (
+                                        line.dn_stations[0], line.dn_stations[-1]) else dn_route_pool[-1]
+                    # loop line
+                    else:
+                        if len(dn_route_pool) > 1:
+                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
+                                dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                         SHORT_ROUTE_WEIGHT]
+                            route, _ = roulette_selection(dn_route_pool, weights)
+
+                if route is not None:
+                    first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
+                    if (route[0], route[-1]) in desired_arr_times.keys():
+                        first_arr_time = desired_arr_times[(route[0], route[-1])]
+                    service, valid = construct_service(route, service_nums, 1, line, first_arr_time, time_span,
+                                                       timetable, arr_slots)
+                    if valid:
+                        # save the info of connecting depots for this service
+                        for term_sta in [route[0], route[-1]]:
+                            if term_sta in line.stations_conn_depots.keys():
+                                if term_sta == route[0]:
+                                    service.from_depot_id = line.stations_conn_depots[term_sta]
+                                if term_sta == route[-1]:
+                                    service.to_depot_id = line.stations_conn_depots[term_sta]
+
+                        added_servs.append(service)
+                        last_routes[line.line_id, 1] = (route[0], route[-1])
+                        # update turn-back connections
+                        if (route[0], route[-1]) in dedicated_turn_back_servs.keys():
+                            direction, serv_id = dedicated_turn_back_servs[(route[0], route[-1])]
+                            if direction == 'from':
+                                service.front_service = serv_id
+                                timetable.services[serv_id].next_service = service.id
+                            else:
+                                service.next_service = serv_id
+                                timetable.services[serv_id].front_service = service.id
+                        # update timetable.services_queues
+                        if service.front_service == -1:
+                            if not line.is_loop_line:
+                                physical_sta_id = min(route[0], 2 * len(line.up_stations) - 1 - route[0])
+                                timetable.services_queues[physical_sta_id]['to'].append(service.id)
+                            else:
+                                timetable.services_queues[route[0]]['to'].append(service.id)
+                        if service.next_service == -1:
+                            if not line.is_loop_line:
+                                physical_sta_id = min(route[-1], 2 * len(line.up_stations) - 1 - route[-1])
+                                timetable.services_queues[physical_sta_id]['from'].append(service.id)
+                            else:
+                                timetable.services_queues[route[-1]]['from'].append(service.id)
+
+                if len(added_servs) == 0:
+                    break  # breaks the While loop
+
+    # delete services when depot capacity is reached
+    if not USE_FIXED_VEHICLE_LINE_MODE:
+        delete_services(timetable_net, lines, depots, passenger_flows)
+    else:
+        delete_services_fixed_mode(timetable_net, lines, depots)
+
+    # simulate passenger flows and calculate service quality
+    passenger_flow_simulate(timetable_net, lines, passenger_flows)
+    # calculate level of service
+    avg_serv_quality, total_wait_time = calculate_service_quality(timetable_net, lines)
+
+    # generate vehicle circulations
+    gen_vehicle_circulation(timetable_net, lines)
+
+    # calculate rolling stock cost
+    fleet_size_dict = {}
+    capacity_dict = {}
+    f_values = {(depot.id, l): f_val for depot in depots.values() for l, f_val in depot.f_values.items()}
+    for d, depot in depots.items():
+        if not USE_FIXED_VEHICLE_LINE_MODE:
+            fleet_size_dict[d] = depot.maximum_flow
+        else:
+            fleet_size_dict[d] = sum(depot.f_values.values())
+        capacity_dict[d] = depot.capacity
+
+    # construct the solution
+    solution = {'timetable_net': timetable_net, 'fleet_size_dict': fleet_size_dict, 'capacity_dict': capacity_dict,
+                'LOS': avg_serv_quality, 'COST': sum(fleet_size_dict.values()) / sum(capacity_dict.values()),
+                'objective': 0, 'total_fleet_size': sum(fleet_size_dict.values()),
+                'total_wait_time': total_wait_time, 'f_values': f_values}
+    solution['objective'] = OBJECTIVE_SCALE * (LOS_BIAS * solution['LOS'] + solution['COST'])
+
+    return solution
+
+
+def shake_solution(lines, fixed_headway_idx_dict, headway_weights_dict, solution_1, solution_2):
+    # update headway weights
+    timetable_net_2 = solution_2['timetable_net']
+    last_p_wait_results = {}
+    for l in lines.keys():
+        last_p_wait_results[l] = solution_1['timetable_net'][l].p_wait
+
+    fixed_headway_idx_dict = adjust_headway_weights(headway_weights_dict, lines, timetable_net_2,
+                                                    last_p_wait_results)
+    for (l, n, d) in headway_weights_dict.keys():
+        regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
