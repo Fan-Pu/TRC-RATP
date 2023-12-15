@@ -34,7 +34,7 @@ HEADWAY_POOL_PEAK = [i for i in
                            int((round(HEADWAY_MAX / 2) - HEADWAY_MIN) / 1))]  # 2 entries
 TRAIN_CAPACITY = 1200  # loading capacity
 TRANSFER_SECS = 120  # fixed transfer time
-TURNBACK_MAX_SECS = 10 * 60  # maximum turnback time
+TURNBACK_MAX_SECS = 5 * 60  # maximum turnback time
 TURNBACK_MIN_SECS = 2 * 60  # minimum turnback time
 LOOPLINE_CONN_MIN_SECS = 0 * 60  # minimum connection time for loop line
 LOOPLINE_CONN_MAX_SECS = 5 * 60  # maximum connection time for loop line
