@@ -53,7 +53,7 @@ NEIGHBORHOOD_SIZE = 10
 ENABLE_NEIGHBORHOOD_SEARCH = True
 MAX_RUNTIME = 2 * 60  # in seconds
 PERTURB_THRESHOLD = 0.5  # the possibility that perturbs the headway
-ALG_METHOD = 2  # 0: headway fixing; 2: headway change; 3: headway swap; 4: hybrid
+ALG_METHOD = 1  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
 
 # model parameters
@@ -640,12 +640,14 @@ def gen_timetables_change_headway(lines, depots, passenger_flows):
 
         # initial solution and solution shaking
         if i == 0:
-            solution = local_search_change_headway(lines, depots, passenger_flows, last_selected_headway_indices, True)
+            solution, last_selected_headway_indices = local_search_change_headway(lines, depots, passenger_flows,
+                                                                                  last_selected_headway_indices, True)
             incumbent_solution = local_best_solution = solution
             is_incumbent = True
             local_objective_values[i] = [incumbent_solution['objective']]
         else:
-            solution = local_search_change_headway(lines, depots, passenger_flows, last_selected_headway_indices, True)
+            solution, last_selected_headway_indices = local_search_change_headway(lines, depots, passenger_flows,
+                                                                                  last_selected_headway_indices, True)
             if solution['objective'] < incumbent_solution['objective']:
                 incumbent_solution = solution
                 is_incumbent = True
@@ -655,8 +657,10 @@ def gen_timetables_change_headway(lines, depots, passenger_flows):
             local_best_solution = solution
             local_objective_values[i] = []
             for j in range(NEIGHBORHOOD_SIZE):
-                local_solution = local_search_change_headway(lines, depots, passenger_flows,
-                                                             last_selected_headway_indices, False)
+                local_solution, last_selected_headway_indices = local_search_change_headway(lines, depots,
+                                                                                            passenger_flows,
+                                                                                            last_selected_headway_indices,
+                                                                                            False)
                 local_objective_values[i].append(local_solution['objective'])
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
@@ -684,7 +688,6 @@ def gen_timetables_change_headway(lines, depots, passenger_flows):
 
 
 def gen_timetables_swap_headway(lines, depots, passenger_flows):
-    sdas = 0
     solution_summary = {}
     constant_string = ''
     for name, value in globals().items():
@@ -702,12 +705,14 @@ def gen_timetables_swap_headway(lines, depots, passenger_flows):
 
         # initial solution and solution shaking
         if i == 0:
-            solution = local_search_swap_headway(lines, depots, passenger_flows, last_selected_headway_indices, True)
+            solution, last_selected_headway_indices = local_search_swap_headway(lines, depots, passenger_flows,
+                                                                                last_selected_headway_indices, True)
             incumbent_solution = local_best_solution = solution
             is_incumbent = True
             local_objective_values[i] = [incumbent_solution['objective']]
         else:
-            solution = local_search_swap_headway(lines, depots, passenger_flows, last_selected_headway_indices, True)
+            solution, last_selected_headway_indices = local_search_swap_headway(lines, depots, passenger_flows,
+                                                                                last_selected_headway_indices, True)
             if solution['objective'] < incumbent_solution['objective']:
                 incumbent_solution = solution
                 is_incumbent = True
@@ -717,8 +722,10 @@ def gen_timetables_swap_headway(lines, depots, passenger_flows):
             local_best_solution = solution
             local_objective_values[i] = []
             for j in range(NEIGHBORHOOD_SIZE):
-                local_solution = local_search_swap_headway(lines, depots, passenger_flows,
-                                                           last_selected_headway_indices, False)
+                local_solution, last_selected_headway_indices = local_search_swap_headway(lines, depots,
+                                                                                          passenger_flows,
+                                                                                          last_selected_headway_indices,
+                                                                                          False)
                 local_objective_values[i].append(local_solution['objective'])
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
@@ -2265,7 +2272,7 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
     if is_shaking:
         last_selected_headway_indices = last_selected_headway_indices_copy
 
-    return solution
+    return solution, last_selected_headway_indices
 
 
 def local_search_swap_headway(lines, depots, passenger_flows, last_selected_headway_indices, is_shaking):
@@ -2347,7 +2354,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
                 if is_in_peak_hour:
                     headway_id = HEADWAY_POOL_PEAK.index(headway_up)
                 else:
-                    headway_id = HEADWAY_POOL_PEAK.index(headway_up)
+                    headway_id = HEADWAY_POOL_OFFPEAK.index(headway_up)
                 timetable.headway_selected_indices[(l, n, 0)] = headway_id
                 if is_shaking:
                     last_selected_headway_indices_copy[(l, n, 0)] = headway_id
@@ -2357,7 +2364,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
                 if is_in_peak_hour:
                     headway_id = HEADWAY_POOL_PEAK.index(headway_dn)
                 else:
-                    headway_id = HEADWAY_POOL_PEAK.index(headway_dn)
+                    headway_id = HEADWAY_POOL_OFFPEAK.index(headway_dn)
                 timetable.headway_selected_indices[(l, n, 1)] = headway_id
                 if is_shaking:
                     last_selected_headway_indices_copy[(l, n, 1)] = headway_id
@@ -2545,7 +2552,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
     if is_shaking:
         last_selected_headway_indices = last_selected_headway_indices_copy
 
-    return solution
+    return solution, last_selected_headway_indices
 
 
 def shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, solution_1, solution_2):
@@ -2563,7 +2570,13 @@ def shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_di
 
 def swap_headway_pairs(headway_pairs):
     # Step 1: Count different pairs
-    different_pairs = [(i, i + 1) for i in range(len(headway_pairs) - 1) if headway_pairs[i] != headway_pairs[i + 1]]
+    different_pairs = []
+    for i in range(len(headway_pairs) - 1):
+        if headway_pairs[i] != headway_pairs[i + 1]:
+            is_peak_hour1 = check_in_peak_hour(START_TIME + i * TIME_PERIOD)
+            is_peak_hour2 = check_in_peak_hour(START_TIME + (i + 1) * TIME_PERIOD)
+            if is_peak_hour1 == is_peak_hour2:
+                different_pairs.append((i, i + 1))
     count_diff_pairs = len(different_pairs)
 
     # Step 2: Select pairs to swap (40% of different pairs)
