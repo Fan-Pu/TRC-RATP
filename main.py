@@ -1,3 +1,5 @@
+import shutil
+
 from Utils import *
 
 if __name__ == '__main__':
@@ -9,7 +11,8 @@ if __name__ == '__main__':
     read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
-    incumbent_solution, constant_string, solution_summary = gen_timetables(50, lines, depots, passenger_flows)
+    random.seed(2023)
+    incumbent_solution, constant_string, solution_summary = execute_algorithm(lines, depots, passenger_flows)
 
     root_folder = f"./results/"
     if os.path.exists(root_folder):
