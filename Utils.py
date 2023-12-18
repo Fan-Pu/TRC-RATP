@@ -52,6 +52,7 @@ MIN_WAIT_TIME = 0.9e12
 MAX_WAIT_TIME = 1.1e12
 NEIGHBORHOOD_SIZE = 1
 ENABLE_NEIGHBORHOOD_SEARCH = True
+ENABLE_ROUTE_WEIGHTS_SELECTION = False
 MAX_RUNTIME = 30 * 60  # in seconds
 PERTURB_THRESHOLD = 0.5  # the possibility of perturbing the headway
 ALG_METHOD = 1  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
@@ -1984,10 +1985,13 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
                     # loop line
                     else:
                         if len(up_route_pool) > 1:
-                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
-                                up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                         SHORT_ROUTE_WEIGHT]
-                            route, _ = roulette_selection(up_route_pool, weights)
+                            if ENABLE_ROUTE_WEIGHTS_SELECTION:
+                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
+                                    up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                             SHORT_ROUTE_WEIGHT]
+                                route, _ = roulette_selection(up_route_pool, weights)
+                            else:
+                                route = random.choice(up_route_pool)
 
                 if route is not None:
                     first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
@@ -2053,10 +2057,13 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
                     # loop line
                     else:
                         if len(dn_route_pool) > 1:
-                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
-                                dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                         SHORT_ROUTE_WEIGHT]
-                            route, _ = roulette_selection(dn_route_pool, weights)
+                            if ENABLE_ROUTE_WEIGHTS_SELECTION:
+                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
+                                    dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                             SHORT_ROUTE_WEIGHT]
+                                route, _ = roulette_selection(dn_route_pool, weights)
+                            else:
+                                route = random.choice(dn_route_pool)
 
                 if route is not None:
                     first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
@@ -2276,10 +2283,13 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
                     # loop line
                     else:
                         if len(up_route_pool) > 1:
-                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
-                                up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                         SHORT_ROUTE_WEIGHT]
-                            route, _ = roulette_selection(up_route_pool, weights)
+                            if ENABLE_ROUTE_WEIGHTS_SELECTION:
+                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(up_route_pool[0]) < len(
+                                    up_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                             SHORT_ROUTE_WEIGHT]
+                                route, _ = roulette_selection(up_route_pool, weights)
+                            else:
+                                route = random.choice(up_route_pool)
 
                 if route is not None:
                     first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_up)
@@ -2344,10 +2354,13 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
                     # loop line
                     else:
                         if len(dn_route_pool) > 1:
-                            weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
-                                dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
-                                                         SHORT_ROUTE_WEIGHT]
-                            route, _ = roulette_selection(dn_route_pool, weights)
+                            if ENABLE_ROUTE_WEIGHTS_SELECTION:
+                                weights = [SHORT_ROUTE_WEIGHT, FULL_ROUTE_WEIGHT] if len(dn_route_pool[0]) < len(
+                                    dn_route_pool[-1]) else [FULL_ROUTE_WEIGHT,
+                                                             SHORT_ROUTE_WEIGHT]
+                                route, _ = roulette_selection(dn_route_pool, weights)
+                            else:
+                                route = random.choice(dn_route_pool)
 
                 if route is not None:
                     first_arr_time = max(start_time_secs, arr_slots[l, route[0]] + headway_dn)
