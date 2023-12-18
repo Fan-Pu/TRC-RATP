@@ -50,11 +50,11 @@ MAX_PROB = 0.9
 MIN_PROB = 0.05
 MIN_WAIT_TIME = 0.9e12
 MAX_WAIT_TIME = 1.1e12
-NEIGHBORHOOD_SIZE = 10
+NEIGHBORHOOD_SIZE = 1
 ENABLE_NEIGHBORHOOD_SEARCH = True
-MAX_RUNTIME = 2 * 60  # in seconds
-PERTURB_THRESHOLD = 0.5  # the possibility that perturbs the headway
-ALG_METHOD = 3  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
+MAX_RUNTIME = 30 * 60  # in seconds
+PERTURB_THRESHOLD = 0.5  # the possibility of perturbing the headway
+ALG_METHOD = 1  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
 ALG_CHANGE_THRESHOLD = 3
 
@@ -614,7 +614,7 @@ def gen_timetables_fix_headway(lines, depots, passenger_flows):
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
                     incumbent_solution = local_solution
-                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!\n")
+                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!")
                     is_incumbent = True
 
                 if local_solution['objective'] < local_best_solution['objective']:
@@ -680,7 +680,7 @@ def gen_timetables_change_headway(lines, depots, passenger_flows):
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
                     incumbent_solution = local_solution
-                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!\n")
+                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!")
                     is_incumbent = True
 
                 if local_solution['objective'] < local_best_solution['objective']:
@@ -745,7 +745,7 @@ def gen_timetables_swap_headway(lines, depots, passenger_flows):
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
                     incumbent_solution = local_solution
-                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!\n")
+                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!")
                     is_incumbent = True
 
                 if local_solution['objective'] < local_best_solution['objective']:
@@ -769,9 +769,9 @@ def gen_timetables_swap_headway(lines, depots, passenger_flows):
 
 def gen_timetables_hybrid(lines, depots, passenger_flows):
     alg_queue = CircularQueue(3)  # for algorithms selection
+    alg_queue.enqueue(2)
     alg_queue.enqueue(0)
     alg_queue.enqueue(1)
-    alg_queue.enqueue(2)
 
     solution_summary = {}
     constant_string = ''
@@ -791,7 +791,6 @@ def gen_timetables_hybrid(lines, depots, passenger_flows):
 
     i = 0  # iteration number
     alg_change_counter = 0
-    previous_obj_value = float('inf')
     while time.time() - start_time < MAX_RUNTIME:
         print("iter: " + str(i))
         is_incumbent = False
@@ -876,7 +875,7 @@ def gen_timetables_hybrid(lines, depots, passenger_flows):
                 # local best solution updates the incumbent_solution
                 if local_solution['objective'] < incumbent_solution['objective']:
                     incumbent_solution = local_solution
-                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!\n")
+                    print(f"local solution {j}: {local_solution['objective']:.3f} updates incumbent solution!")
                     is_incumbent = True
                     alg_change_counter = 0  # reset the counter
 
@@ -884,7 +883,7 @@ def gen_timetables_hybrid(lines, depots, passenger_flows):
                     local_best_solution = local_solution
             previous_solution = local_best_solution
             # no updates, add 1 to the counter
-            if local_best_solution['objective'] >= previous_obj_value:
+            if not is_incumbent:
                 alg_change_counter += 1
         print(f"current: {local_best_solution['objective']:.3f}, incumbent: {incumbent_solution['objective']:.3f}\n")
 
