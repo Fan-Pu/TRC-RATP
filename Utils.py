@@ -48,12 +48,12 @@ LOS_BIAS = 1.2
 REFRESH_THRESHOLD = 50
 MAX_PROB = 0.9
 MIN_PROB = 0.05
-MIN_WAIT_TIME = 0.9e12
+MIN_WAIT_TIME = 0.8e12
 MAX_WAIT_TIME = 1.1e12
 NEIGHBORHOOD_SIZE = 1
 ENABLE_NEIGHBORHOOD_SEARCH = True
 ENABLE_ROUTE_WEIGHTS_SELECTION = False
-MAX_RUNTIME = 30 * 60  # in seconds
+MAX_RUNTIME = 2 * 60  # in seconds
 PERTURB_THRESHOLD = 0.5  # the possibility of perturbing the headway
 ALG_METHOD = 1  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
@@ -2144,6 +2144,10 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
 
 
 def local_search_change_headway(lines, depots, passenger_flows, last_selected_headway_indices, is_shaking):
+    # reset depot.maximum_flow
+    for depot in depots.values():
+        depot.maximum_flow = 0
+
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
     timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
