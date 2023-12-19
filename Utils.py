@@ -1398,8 +1398,6 @@ def adjust_headway_weights(headway_weights_dict, lines, timetable_net, last_p_wa
         if sum_wait < sum_wait_last:
             headway_weights_dict[(l, n, d)][headway_index] += HEADWAY_CHANGE_SCALE
             fixed_headway_idx_dict[(l, n, d)] = headway_index
-        elif sum_wait == sum_wait_last:
-            fixed_headway_idx_dict[(l, n, d)] = headway_index
         elif sum_wait > sum_wait_last:
             headway_weights_dict[(l, n, d)][headway_index] -= HEADWAY_CHANGE_SCALE
             headway_weights_dict[(l, n, d)][headway_index] = max(headway_weights_dict[(l, n, d)][headway_index], 1)
@@ -1434,6 +1432,9 @@ def refresh_roulette_weights(headway_weights_dict):
 
 def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, depots, passenger_flows,
                              last_selected_headway_indices, is_shaking):
+    # reset depot.maximum_flow
+    for depot in depots.values():
+        depot.maximum_flow = 0
     # generate a timetable for the network
     timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
 
@@ -1981,6 +1982,10 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
 
 
 def local_search_swap_headway(lines, depots, passenger_flows, last_selected_headway_indices, is_shaking):
+    # reset depot.maximum_flow
+    for depot in depots.values():
+        depot.maximum_flow = 0
+
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
     timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
