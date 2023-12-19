@@ -11,7 +11,7 @@ if __name__ == '__main__':
     read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
-    random.seed(2023)
+    random.seed(1)
     incumbent_solution, constant_string, solution_summary = execute_algorithm(lines, depots, passenger_flows)
 
     root_folder = f"./results/"

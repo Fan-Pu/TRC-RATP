@@ -26,11 +26,13 @@ PEAK_HOURS = [(7 * 60, 9 * 60), (17 * 60, 19 * 60)]
 FLOW_FACTOR = 1.5
 HEADWAY_MIN = 180  # seconds
 HEADWAY_MAX = 480
+SPLIT_VAL = 1.5
 HEADWAY_POOL_OFFPEAK = [i for i in
-                        range(HEADWAY_MIN * 2, HEADWAY_MAX + 1, int((HEADWAY_MAX - HEADWAY_MIN * 2) / 2))]  # 3 entries
+                        range(round(HEADWAY_MIN * SPLIT_VAL), HEADWAY_MAX + 1,
+                              round((HEADWAY_MAX - HEADWAY_MIN * SPLIT_VAL) / 2))]  # 3 entries
 HEADWAY_POOL_PEAK = [i for i in
-                     range(HEADWAY_MIN, round(HEADWAY_MAX / 2) + 1,
-                           int((round(HEADWAY_MAX / 2) - HEADWAY_MIN) / 1))]  # 2 entries
+                     range(HEADWAY_MIN, round(HEADWAY_MAX / SPLIT_VAL) + 1,
+                           int((round(HEADWAY_MAX / SPLIT_VAL) - HEADWAY_MIN) / 1))]  # 2 entries
 TRAIN_CAPACITY = 1200  # loading capacity
 TRANSFER_SECS = 120  # fixed transfer time
 TURNBACK_MAX_SECS = 5 * 60  # maximum turnback time
@@ -52,10 +54,10 @@ MIN_WAIT_TIME = 0.7e12
 MAX_WAIT_TIME = 1.2e12
 NEIGHBORHOOD_SIZE = 1
 ENABLE_NEIGHBORHOOD_SEARCH = True
-ENABLE_ROUTE_WEIGHTS_SELECTION = False
+ENABLE_ROUTE_WEIGHTS_SELECTION = True
 MAX_RUNTIME = 30 * 60  # in seconds
 PERTURB_THRESHOLD = 0.5  # the possibility of perturbing the headway
-ALG_METHOD = 1  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
+ALG_METHOD = 0  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
 ALG_CHANGE_THRESHOLD = 0
 
