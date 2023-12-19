@@ -66,474 +66,6 @@ TIME_PERIOD = 60  # 1 hour
 N = [i for i in range(START_TIME, END_TIME + 1, TIME_PERIOD)]
 
 
-def read_lines(folder_path):
-    csv_files = [
-        file
-        for file in os.listdir(folder_path)
-        if file.endswith(".csv") and file != "general_info.csv"
-    ]
-
-    if not csv_files:
-        print("No CSV files found in the given folder.")
-        return
-
-    lines = {}
-    # read general_info.csv
-    csv_file_path = os.path.join(folder_path, "general_info.csv")
-    with open(csv_file_path, "r", newline="") as file:
-        reader = csv.reader(file)
-        header = next(reader)
-        for row in reader:
-            rail_line = RailLine(row)
-            lines[rail_line.line_id] = rail_line
-
-    # read other files
-    for csv_file in csv_files:
-        csv_file_path = os.path.join(folder_path, csv_file)
-        line_id = csv_file.split(".")[0].split("-")[2]
-        with open(csv_file_path, "r", newline="") as file:
-            reader = csv.reader(file)
-            header = next(reader)
-            rail_line = lines[line_id]
-            for row in reader:
-                (
-                    station_name,
-                    station_id,
-                    dwell_time,
-                    runtime,
-                    is_transfer_station,
-                    conn_depot_id,
-                ) = row
-
-                rail_line.dwells[int(station_id)] = int(dwell_time)
-                if int(station_id) not in rail_line.up_stations:
-                    rail_line.up_stations.append(int(station_id))
-
-                    if conn_depot_id != "":
-                        rail_line.conn_depots.append(int(conn_depot_id))
-                        rail_line.stations_conn_depots[int(station_id)] = int(
-                            conn_depot_id
-                        )
-
-                    # add sections
-                    if runtime != "":
-                        rail_line.runtimes[
-                            (int(station_id), int(station_id) + 1)
-                        ] = int(runtime)
-                else:
-                    station_cnt = len(rail_line.up_stations)
-                    temp_runtime = rail_line.runtimes[(station_cnt - 1, station_cnt)]
-                    del rail_line.runtimes[(station_cnt - 1, station_cnt)]
-                    rail_line.runtimes[(station_cnt - 1, 0)] = temp_runtime
-                    rail_line.is_loop_line = True
-
-                # add up direction platform names
-                if (station_id, 0) not in rail_line.platform_names:
-                    rail_line.platform_names[(int(station_id), 0)] = station_name
-
-    # generate values for down direction
-    for key, line in lines.items():
-        # generate stations
-        line.dn_stations = [
-            i for i in range(len(line.up_stations), 2 * len(line.up_stations))
-        ]
-        runtimes = {}
-        station_cnt = len(line.up_stations)
-        for (i, j), runtime in line.runtimes.items():
-            runtimes[(2 * station_cnt - 1 - j, 2 * station_cnt - 1 - i)] = runtime
-        line.runtimes.update(runtimes)
-        # update stations_conn_depots
-        stations_conn_depots = {}
-        for sta_id, depot_id in line.stations_conn_depots.items():
-            stations_conn_depots[2 * len(line.up_stations) - 1 - sta_id] = depot_id
-        line.stations_conn_depots.update(stations_conn_depots)
-        # add down direction platform names
-        for station_id in line.dn_stations:
-            if (station_id, 1) not in line.platform_names:
-                platform_name = line.platform_names[
-                    (2 * len(line.up_stations) - station_id - 1, 0)
-                ]
-                line.platform_names[(station_id, 1)] = platform_name
-        # set down direction dwells
-        line.dwells.update(
-            {
-                2 * len(line.up_stations) - sta_id - 1: value
-                for sta_id, value in line.dwells.items()
-            }
-        )
-
-    # generate feasible routes (short turning routes needs to be determined by passenger flow)
-    for key, line in lines.items():
-        if not line.is_loop_line:
-            # the line only has one middle station connect with depot
-            if len(line.stations_conn_depots) == 2 and not {line.up_stations[0], line.up_stations[-1]}.intersection(
-                    line.stations_conn_depots.keys()):
-                continue
-            else:
-                # up direction full route
-                line.routes.append(line.up_stations)
-                line.up_routes.append((line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1])))
-                # down direction full route
-                line.routes.append(line.dn_stations)
-                line.dn_routes.append((line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1])))
-        else:
-            # up direction full route
-            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
-                temp_route = line.up_stations + [line.up_stations[0]]
-                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
-                               line.runtimes[(temp_route[-2], temp_route[0])]
-                line.routes.append(temp_route)
-                line.up_routes.append((temp_route, temp_runtime))
-            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
-                temp_route = [line.up_stations[-1]] + line.up_stations
-                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
-                               line.runtimes[(temp_route[0], temp_route[1])]
-                line.routes.append(temp_route)
-                line.up_routes.append((temp_route, temp_runtime))
-
-            # dn direction full route
-            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
-                temp_route = [line.dn_stations[-1]] + line.dn_stations
-                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
-                               line.runtimes[(temp_route[0], temp_route[1])]
-                line.routes.append(temp_route)
-                line.dn_routes.append((temp_route, temp_runtime))
-            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
-                temp_route = line.dn_stations + [line.dn_stations[0]]
-                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
-                               line.runtimes[(temp_route[-2], temp_route[-1])]
-                line.routes.append(temp_route)
-                line.dn_routes.append((temp_route, temp_runtime))
-    return lines
-
-
-def read_depots(folder_path, lines):
-    csv_files = [
-        file
-        for file in os.listdir(folder_path)
-        if file.endswith(".csv") and file != "general_info.csv"
-    ]
-
-    if not csv_files:
-        print("No CSV files found in the given folder.")
-        return
-
-    depots = {}
-    # read files
-    for csv_file in csv_files:
-        csv_file_path = os.path.join(folder_path, csv_file)
-        depot_id = csv_file.split(".")[0].split("-")[2]
-        depot = Depot(depot_id)
-        with open(csv_file_path, "r", newline="") as file:
-            reader = csv.reader(file)
-            header = next(reader)
-            for row in reader:
-                _, capacity, conn_line_id, conn_station_id, runtime = row
-                if capacity != "":
-                    depot.capacity = int(capacity)
-                depot.conn_lines.append(int(conn_line_id))
-                depot.conn_stations[int(conn_line_id)].append(int(conn_station_id))
-                reverse_station_id = 2 * len(lines[conn_line_id].up_stations) - int(conn_station_id) - 1
-                depot.conn_stations[int(conn_line_id)].append(reverse_station_id)
-                depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(runtime)
-                depot.f_values = {i: 0 for i in depot.conn_lines}
-        depots[depot_id] = depot
-
-    return depots
-
-
-def read_transect_flows(folder_path, type_name, lines):
-    csv_files = [file for file in os.listdir(folder_path) if file.endswith(".csv")]
-    sectional_flows = {
-        line_id: {} for line_id in lines.keys()
-    }  # section flow of all lines, key: line_id
-    # for each line
-    for csv_file in csv_files:
-        csv_file_path = os.path.join(folder_path, csv_file)
-        _, _, line_id, _, direction_flag = csv_file.split(".")[0].split("-")
-        line = lines[line_id]
-        sectional_flow = []  # section flow for this line and this direction
-        with open(csv_file_path, "r", newline="") as file:
-            reader = csv.reader(file)
-            for row in reader:
-                row_data = {}
-                for i in range(1, len(row)):
-                    sta_id = (
-                        i - 1
-                        if direction_flag == "0"
-                        else i - 1 + len(line.up_stations)
-                    )
-                    row_data[(sta_id, sta_id + 1)] = int(row[i])
-                sectional_flow.append(row_data)
-
-        sectional_flows[line_id][direction_flag] = sectional_flow
-
-    return PassengerFlow(type_name, sectional_flows)
-
-
-def set_line_short_routes(lines, passenger_flows):
-    for line_id, line in lines.items():
-        # check if it has middle stations that connect with depots
-        mid_station_conn_depots = [
-            i
-            for i in line.stations_conn_depots
-            if i
-               not in [
-                   line.up_stations[0],
-                   line.up_stations[-1],
-                   line.dn_stations[0],
-                   line.dn_stations[-1],
-               ]
-        ]
-        if len(mid_station_conn_depots) == 0:
-            continue
-        flow_data = passenger_flows.sectional_flows[line.line_id]
-        is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
-        new_short_routes = ([])  # short routes need to be added if is_flow_unbalance is True
-
-        for window in PEAK_HOURS:
-            if is_flow_unbalance:
-                break
-            start_time_id, end_time_id = [
-                int((t - START_TIME) / INTERVAL) for t in window]
-            # up direction and down direction flows
-            for key, rows in flow_data.items():
-                # for each row (in flow_data) during peak hours
-                if key == "0":  # up direction
-                    mid_station_id = min(mid_station_conn_depots)
-                    routes = [
-                        [i for i in range(line.up_stations[0], mid_station_id + 1)],
-                        [i for i in range(mid_station_id, line.up_stations[-1] + 1)],
-                    ]
-                    avg_passenger_flows = [
-                        [],
-                        [],
-                    ]  # flows for two routes over several hours of peak hours
-                    for t in range(start_time_id, end_time_id):
-                        row = rows[t]
-                        for k in range(0, len(routes)):
-                            route = routes[k]
-                            # average flow over the route
-                            avg_passenger_flow = sum(
-                                [int(row[(i, i + 1)]) for i in route[:-1]]
-                            ) / (len(route) - 1)
-                            avg_passenger_flows[k].append(avg_passenger_flow)
-                    # average flow over peak hours and routes
-                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
-                                           statistics.mean(avg_passenger_flows[-1])]
-                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
-                        is_flow_unbalance = True
-                        # generate short routes
-                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
-                        short_route = routes[short_route_id]
-                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
-                        new_short_routes += [short_route, short_route_reverse]
-                        break  # breaks 'for key, rows in flow_data.items()'
-
-                else:  # down direction
-                    mid_station_id = max(mid_station_conn_depots)
-                    routes = [
-                        [i for i in range(line.dn_stations[0], mid_station_id + 1)],
-                        [i for i in range(mid_station_id, line.dn_stations[-1] + 1)],
-                    ]
-                    avg_passenger_flows = [
-                        [],
-                        [],
-                    ]  # flows for two routes over several hours of peak hours
-                    for t in range(start_time_id, end_time_id):
-                        row = rows[t]
-                        for k in range(0, len(routes)):
-                            route = routes[k]
-                            # average flow over the route
-                            avg_passenger_flow = sum(
-                                [int(row[(i, i + 1)]) for i in route[:-1]]
-                            ) / (len(route) - 1)
-                            avg_passenger_flows[k].append(avg_passenger_flow)
-                    # average flow over peak hours and routes
-                    avg_passenger_flows = [
-                        statistics.mean(avg_passenger_flows[0]),
-                        statistics.mean(avg_passenger_flows[-1]),
-                    ]
-                    if max(avg_passenger_flows) > FLOW_FACTOR * min(
-                            avg_passenger_flows
-                    ):
-                        is_flow_unbalance = True
-                        # generate short routes
-                        short_route_id = avg_passenger_flows.index(
-                            max(avg_passenger_flows)
-                        )
-                        short_route = routes[short_route_id]
-                        short_route_reverse = [
-                                                  2 * len(line.up_stations) - 1 - i for i in short_route
-                                              ][::-1]
-                        new_short_routes += [short_route, short_route_reverse]
-                        break  # breaks 'for key, rows in flow_data.items()'
-
-        # for normal line
-        if not line.is_loop_line and is_flow_unbalance:
-            # the line only has one middle station connect with depot
-            if len(line.stations_conn_depots) == 2 and not {line.up_stations[0], line.up_stations[-1]}.intersection(
-                    line.stations_conn_depots.keys()):
-                # generate short routes
-                station_list = sorted(list(line.stations_conn_depots.keys()))
-                new_short_routes = [[i for i in range(station_list[0], line.up_stations[-1] + 1)],
-                                    [i for i in range(0, station_list[0] + 1)],
-                                    [i for i in range(station_list[1], line.dn_stations[-1] + 1)],
-                                    [i for i in range(line.dn_stations[0], station_list[1] + 1)]]
-                line.routes += new_short_routes
-                for short_route in new_short_routes:
-                    route_runtime = line.get_runtime(short_route[0], short_route[-1])
-                    if short_route[0] <= line.up_stations[-1]:
-                        line.up_routes.append((short_route, route_runtime))
-                    else:
-                        line.dn_routes.append((short_route, route_runtime))
-            else:
-                # generate short routes
-                line.routes += new_short_routes
-                for short_route in new_short_routes:
-                    route_runtime = line.get_runtime(short_route[0], short_route[-1])
-                    if short_route[0] <= line.up_stations[-1]:
-                        line.up_routes.append((short_route, route_runtime))
-                    else:
-                        line.dn_routes.append((short_route, route_runtime))
-        # for loop line
-        elif line.is_loop_line and len(line.stations_conn_depots) == 4:
-            # generate short routes
-            station_list = sorted(list(line.stations_conn_depots.keys()))
-            new_short_routes = [[i for i in range(station_list[0], station_list[1] + 1)],
-                                [i for i in range(station_list[2], station_list[3] + 1)]]
-            line.routes += new_short_routes
-            for short_route in new_short_routes:
-                route_runtime = line.get_runtime(short_route[0], short_route[-1])
-                if short_route[0] <= line.up_stations[-1]:
-                    line.up_routes.append((short_route, route_runtime))
-                else:
-                    line.dn_routes.append((short_route, route_runtime))
-
-
-def read_arrival_rates(folder_path, lines, passenger_flows):
-    for filename in os.listdir(folder_path):
-        _, _, line_id = filename.split(".")[0].split("-")
-        line = lines[line_id]
-        file_path = os.path.join(folder_path, filename)
-        # read all sheets
-        all_sheets = pd.read_excel(file_path, sheet_name=None)
-        # read every sheet
-        for sheet_name, df in all_sheets.items():
-            column_num = df.shape[1]
-            # for every row
-            for index, row in df.iterrows():
-                station_id = (
-                    int(row[0])
-                    if sheet_name == "up"
-                    else 2 * len(line.up_stations) - 1 - int(row[0])
-                )
-                for j in range(1, column_num):
-                    start_t = (j - 1) * INTERVAL
-                    end_t = start_t + INTERVAL
-                    # calculate arrival rate (for each second)
-                    arrival_rate = row[j] / INTERVAL
-                    passenger_flows.d.update(
-                        {
-                            (int(line_id), station_id, t): arrival_rate
-                            for t in range(start_t, end_t)
-                        }
-                    )
-
-
-def read_alight_rates(folder_path, lines, passenger_flows):
-    for filename in os.listdir(folder_path):
-        _, _, line_id = filename.split(".")[0].split("-")
-        line = lines[line_id]
-        sectional_flows = passenger_flows.sectional_flows[line_id]
-        file_path = os.path.join(folder_path, filename)
-        # read all sheets
-        all_sheets = pd.read_excel(file_path, sheet_name=None)
-        # read every sheet
-        for sheet_name, df in all_sheets.items():
-            if "alight" not in sheet_name:
-                continue
-            column_num = df.shape[1]
-            # transect volume in this direction
-            transect_volume = (
-                sectional_flows["0"]
-                if sheet_name == "alight-up"
-                else sectional_flows["1"]
-            )
-            # for every row
-            for index, row in df.iterrows():
-                station_id = (
-                    int(row[0])
-                    if sheet_name == "alight-up"
-                    else 2 * len(line.up_stations) - 1 - int(row[0])
-                )
-                for j in range(1, column_num):
-                    start_t = (j - 1) * INTERVAL
-                    end_t = start_t + INTERVAL
-                    if station_id in [line.up_stations[0], line.dn_stations[0]]:
-                        alight_rate = 0  # the first station no one alights the train
-                    elif station_id in [line.up_stations[-1], line.dn_stations[-1]]:
-                        alight_rate = (
-                            1  # the last station all passengers alight the train
-                        )
-                    else:
-                        front_transect_volume = transect_volume[j - 1][
-                            (station_id - 1, station_id)
-                        ]
-                        alight_num = min(front_transect_volume, int(row[j]))
-                        alight_rate = alight_num / max(front_transect_volume, 0.000001)
-                    passenger_flows.theta.update(
-                        {
-                            (int(line_id), station_id, t): alight_rate
-                            for t in range(start_t, end_t)
-                        }
-                    )
-
-
-def read_transfer_rates(folder_path, lines, passenger_flows):
-    for filename in os.listdir(folder_path):
-        station_name = filename.split(".")[0]
-        file_path = os.path.join(folder_path, filename)
-        # read sheet
-        df = pd.read_excel(file_path)
-        column_num = df.shape[1]
-        for index, row in df.iterrows():
-            line_id1, dir_flag1, line_id2, dir_flag2 = row[0].split(",")
-            line1 = lines[line_id1]
-            line2 = lines[line_id2]
-            station_id1 = [
-                sta_id
-                for (sta_id, direction), value in line1.platform_names.items()
-                if direction == int(dir_flag1) and value == station_name
-            ][0]
-            station_id2 = [
-                sta_id
-                for (sta_id, direction), value in line2.platform_names.items()
-                if direction == int(dir_flag2) and value == station_name
-            ][0]
-            # for each column
-            for j in range(1, column_num):
-                start_t = (j - 1) * INTERVAL
-                end_t = start_t + INTERVAL
-                transfer_rate = float(row[j])
-                passenger_flows.phi.update(
-                    {
-                        (
-                            int(line_id1),
-                            station_id1,
-                            int(line_id2),
-                            station_id2,
-                            t,
-                        ): transfer_rate
-                        for t in range(start_t, end_t)
-                    }
-                )
-                # save transfer connections
-                temp_key = (int(line_id1), station_id1, int(line_id2), station_id2)
-                if temp_key not in line1.transfer_pairs:
-                    line1.transfer_pairs.append(temp_key)
-
-
 def execute_algorithm(lines, depots, passenger_flows):
     # headway fixing
     if ALG_METHOD == 0:
@@ -567,8 +99,6 @@ def gen_timetables_fix_headway(lines, depots, passenger_flows):
     headway_weights_dict = {(l, n, d): [INITIAL_HEADWAY_WEIGHT for _ in
                                         (HEADWAY_POOL_PEAK if check_in_peak_hour(n) else HEADWAY_POOL_OFFPEAK)]
                             for l in lines.keys() for n in N for d in [0, 1]}
-    # the p_wait result of the last passenger simulation
-    last_p_wait_results = {l: {} for l in lines.keys()}
     start_time = time.time()
     refresh_counter = 0
     fixed_headway_idx_dict = None  # key (l, n, d)
@@ -601,7 +131,8 @@ def gen_timetables_fix_headway(lines, depots, passenger_flows):
 
             # fixed_headway_idx_dict and headway_weights_dict are updated
             print('solution is shaken. ')
-            shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, previous_solution, solution)
+            fixed_headway_idx_dict = shake_solution_fix_headway(lines, headway_weights_dict, previous_solution,
+                                                                solution)
 
             # local search. fixed_headway_idx_dict and headway_weights_dict do not change
             print('start local search:\n')
@@ -852,8 +383,8 @@ def gen_timetables_hybrid(lines, depots, passenger_flows):
             # fixed_headway_idx_dict and headway_weights_dict are updated
             if alg_id == 0:
                 print('solution is shaken. ')
-                shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, previous_solution,
-                                           solution)
+                fixed_headway_idx_dict = shake_solution_fix_headway(lines, headway_weights_dict, previous_solution,
+                                                                    solution)
 
             # local search.
             print('start local search:\n')
@@ -2735,7 +2266,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
     return solution, last_selected_headway_indices
 
 
-def shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, solution_1, solution_2):
+def shake_solution_fix_headway(lines, headway_weights_dict, solution_1, solution_2):
     # update headway weights
     timetable_net_2 = solution_2['timetable_net']
     last_p_wait_results = {}
@@ -2746,6 +2277,8 @@ def shake_solution_fix_headway(lines, fixed_headway_idx_dict, headway_weights_di
                                                     last_p_wait_results)
     for (l, n, d) in headway_weights_dict.keys():
         regulate_weights(headway_weights_dict[(l, n, d)], MAX_PROB, MIN_PROB)
+
+    return fixed_headway_idx_dict
 
 
 def swap_headway_pairs(headway_pairs):
@@ -2766,3 +2299,471 @@ def swap_headway_pairs(headway_pairs):
     # Step 3: Swap the selected pairs
     for pair in pairs_to_swap:
         headway_pairs[pair[0]], headway_pairs[pair[1]] = headway_pairs[pair[1]], headway_pairs[pair[0]]
+
+
+def read_lines(folder_path):
+    csv_files = [
+        file
+        for file in os.listdir(folder_path)
+        if file.endswith(".csv") and file != "general_info.csv"
+    ]
+
+    if not csv_files:
+        print("No CSV files found in the given folder.")
+        return
+
+    lines = {}
+    # read general_info.csv
+    csv_file_path = os.path.join(folder_path, "general_info.csv")
+    with open(csv_file_path, "r", newline="") as file:
+        reader = csv.reader(file)
+        header = next(reader)
+        for row in reader:
+            rail_line = RailLine(row)
+            lines[rail_line.line_id] = rail_line
+
+    # read other files
+    for csv_file in csv_files:
+        csv_file_path = os.path.join(folder_path, csv_file)
+        line_id = csv_file.split(".")[0].split("-")[2]
+        with open(csv_file_path, "r", newline="") as file:
+            reader = csv.reader(file)
+            header = next(reader)
+            rail_line = lines[line_id]
+            for row in reader:
+                (
+                    station_name,
+                    station_id,
+                    dwell_time,
+                    runtime,
+                    is_transfer_station,
+                    conn_depot_id,
+                ) = row
+
+                rail_line.dwells[int(station_id)] = int(dwell_time)
+                if int(station_id) not in rail_line.up_stations:
+                    rail_line.up_stations.append(int(station_id))
+
+                    if conn_depot_id != "":
+                        rail_line.conn_depots.append(int(conn_depot_id))
+                        rail_line.stations_conn_depots[int(station_id)] = int(
+                            conn_depot_id
+                        )
+
+                    # add sections
+                    if runtime != "":
+                        rail_line.runtimes[
+                            (int(station_id), int(station_id) + 1)
+                        ] = int(runtime)
+                else:
+                    station_cnt = len(rail_line.up_stations)
+                    temp_runtime = rail_line.runtimes[(station_cnt - 1, station_cnt)]
+                    del rail_line.runtimes[(station_cnt - 1, station_cnt)]
+                    rail_line.runtimes[(station_cnt - 1, 0)] = temp_runtime
+                    rail_line.is_loop_line = True
+
+                # add up direction platform names
+                if (station_id, 0) not in rail_line.platform_names:
+                    rail_line.platform_names[(int(station_id), 0)] = station_name
+
+    # generate values for down direction
+    for key, line in lines.items():
+        # generate stations
+        line.dn_stations = [
+            i for i in range(len(line.up_stations), 2 * len(line.up_stations))
+        ]
+        runtimes = {}
+        station_cnt = len(line.up_stations)
+        for (i, j), runtime in line.runtimes.items():
+            runtimes[(2 * station_cnt - 1 - j, 2 * station_cnt - 1 - i)] = runtime
+        line.runtimes.update(runtimes)
+        # update stations_conn_depots
+        stations_conn_depots = {}
+        for sta_id, depot_id in line.stations_conn_depots.items():
+            stations_conn_depots[2 * len(line.up_stations) - 1 - sta_id] = depot_id
+        line.stations_conn_depots.update(stations_conn_depots)
+        # add down direction platform names
+        for station_id in line.dn_stations:
+            if (station_id, 1) not in line.platform_names:
+                platform_name = line.platform_names[
+                    (2 * len(line.up_stations) - station_id - 1, 0)
+                ]
+                line.platform_names[(station_id, 1)] = platform_name
+        # set down direction dwells
+        line.dwells.update(
+            {
+                2 * len(line.up_stations) - sta_id - 1: value
+                for sta_id, value in line.dwells.items()
+            }
+        )
+
+    # generate feasible routes (short turning routes needs to be determined by passenger flow)
+    for key, line in lines.items():
+        if not line.is_loop_line:
+            # the line only has one middle station connect with depot
+            if len(line.stations_conn_depots) == 2 and not {line.up_stations[0], line.up_stations[-1]}.intersection(
+                    line.stations_conn_depots.keys()):
+                continue
+            else:
+                # up direction full route
+                line.routes.append(line.up_stations)
+                line.up_routes.append((line.up_stations, line.get_runtime(line.up_stations[0], line.up_stations[-1])))
+                # down direction full route
+                line.routes.append(line.dn_stations)
+                line.dn_routes.append((line.dn_stations, line.get_runtime(line.dn_stations[0], line.dn_stations[-1])))
+        else:
+            # up direction full route
+            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
+                temp_route = line.up_stations + [line.up_stations[0]]
+                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
+                               line.runtimes[(temp_route[-2], temp_route[0])]
+                line.routes.append(temp_route)
+                line.up_routes.append((temp_route, temp_runtime))
+            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
+                temp_route = [line.up_stations[-1]] + line.up_stations
+                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
+                               line.runtimes[(temp_route[0], temp_route[1])]
+                line.routes.append(temp_route)
+                line.up_routes.append((temp_route, temp_runtime))
+
+            # dn direction full route
+            if line.up_stations[0] in line.stations_conn_depots:  # first station connect with depot
+                temp_route = [line.dn_stations[-1]] + line.dn_stations
+                temp_runtime = line.get_runtime(temp_route[1], temp_route[-1]) + \
+                               line.runtimes[(temp_route[0], temp_route[1])]
+                line.routes.append(temp_route)
+                line.dn_routes.append((temp_route, temp_runtime))
+            elif line.up_stations[-1] in line.stations_conn_depots:  # last station connect with depot
+                temp_route = line.dn_stations + [line.dn_stations[0]]
+                temp_runtime = line.get_runtime(temp_route[0], temp_route[-2]) + \
+                               line.runtimes[(temp_route[-2], temp_route[-1])]
+                line.routes.append(temp_route)
+                line.dn_routes.append((temp_route, temp_runtime))
+    return lines
+
+
+def read_depots(folder_path, lines):
+    csv_files = [
+        file
+        for file in os.listdir(folder_path)
+        if file.endswith(".csv") and file != "general_info.csv"
+    ]
+
+    if not csv_files:
+        print("No CSV files found in the given folder.")
+        return
+
+    depots = {}
+    # read files
+    for csv_file in csv_files:
+        csv_file_path = os.path.join(folder_path, csv_file)
+        depot_id = csv_file.split(".")[0].split("-")[2]
+        depot = Depot(depot_id)
+        with open(csv_file_path, "r", newline="") as file:
+            reader = csv.reader(file)
+            header = next(reader)
+            for row in reader:
+                _, capacity, conn_line_id, conn_station_id, runtime = row
+                if capacity != "":
+                    depot.capacity = int(capacity)
+                depot.conn_lines.append(int(conn_line_id))
+                depot.conn_stations[int(conn_line_id)].append(int(conn_station_id))
+                reverse_station_id = 2 * len(lines[conn_line_id].up_stations) - int(conn_station_id) - 1
+                depot.conn_stations[int(conn_line_id)].append(reverse_station_id)
+                depot.runtime[(int(conn_line_id), int(conn_station_id))] = int(runtime)
+                depot.f_values = {i: 0 for i in depot.conn_lines}
+        depots[depot_id] = depot
+
+    return depots
+
+
+def read_transect_flows(folder_path, type_name, lines):
+    csv_files = [file for file in os.listdir(folder_path) if file.endswith(".csv")]
+    sectional_flows = {
+        line_id: {} for line_id in lines.keys()
+    }  # section flow of all lines, key: line_id
+    # for each line
+    for csv_file in csv_files:
+        csv_file_path = os.path.join(folder_path, csv_file)
+        _, _, line_id, _, direction_flag = csv_file.split(".")[0].split("-")
+        line = lines[line_id]
+        sectional_flow = []  # section flow for this line and this direction
+        with open(csv_file_path, "r", newline="") as file:
+            reader = csv.reader(file)
+            for row in reader:
+                row_data = {}
+                for i in range(1, len(row)):
+                    sta_id = (
+                        i - 1
+                        if direction_flag == "0"
+                        else i - 1 + len(line.up_stations)
+                    )
+                    row_data[(sta_id, sta_id + 1)] = int(row[i])
+                sectional_flow.append(row_data)
+
+        sectional_flows[line_id][direction_flag] = sectional_flow
+
+    return PassengerFlow(type_name, sectional_flows)
+
+
+def set_line_short_routes(lines, passenger_flows):
+    for line_id, line in lines.items():
+        # check if it has middle stations that connect with depots
+        mid_station_conn_depots = [
+            i
+            for i in line.stations_conn_depots
+            if i
+               not in [
+                   line.up_stations[0],
+                   line.up_stations[-1],
+                   line.dn_stations[0],
+                   line.dn_stations[-1],
+               ]
+        ]
+        if len(mid_station_conn_depots) == 0:
+            continue
+        flow_data = passenger_flows.sectional_flows[line.line_id]
+        is_flow_unbalance = False  # to see if the flow during peak hours is fluctuating
+        new_short_routes = ([])  # short routes need to be added if is_flow_unbalance is True
+
+        for window in PEAK_HOURS:
+            if is_flow_unbalance:
+                break
+            start_time_id, end_time_id = [
+                int((t - START_TIME) / INTERVAL) for t in window]
+            # up direction and down direction flows
+            for key, rows in flow_data.items():
+                # for each row (in flow_data) during peak hours
+                if key == "0":  # up direction
+                    mid_station_id = min(mid_station_conn_depots)
+                    routes = [
+                        [i for i in range(line.up_stations[0], mid_station_id + 1)],
+                        [i for i in range(mid_station_id, line.up_stations[-1] + 1)],
+                    ]
+                    avg_passenger_flows = [
+                        [],
+                        [],
+                    ]  # flows for two routes over several hours of peak hours
+                    for t in range(start_time_id, end_time_id):
+                        row = rows[t]
+                        for k in range(0, len(routes)):
+                            route = routes[k]
+                            # average flow over the route
+                            avg_passenger_flow = sum(
+                                [int(row[(i, i + 1)]) for i in route[:-1]]
+                            ) / (len(route) - 1)
+                            avg_passenger_flows[k].append(avg_passenger_flow)
+                    # average flow over peak hours and routes
+                    avg_passenger_flows = [statistics.mean(avg_passenger_flows[0]),
+                                           statistics.mean(avg_passenger_flows[-1])]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(avg_passenger_flows):
+                        is_flow_unbalance = True
+                        # generate short routes
+                        short_route_id = avg_passenger_flows.index(max(avg_passenger_flows))
+                        short_route = routes[short_route_id]
+                        short_route_reverse = [2 * len(line.up_stations) - 1 - i for i in short_route][::-1]
+                        new_short_routes += [short_route, short_route_reverse]
+                        break  # breaks 'for key, rows in flow_data.items()'
+
+                else:  # down direction
+                    mid_station_id = max(mid_station_conn_depots)
+                    routes = [
+                        [i for i in range(line.dn_stations[0], mid_station_id + 1)],
+                        [i for i in range(mid_station_id, line.dn_stations[-1] + 1)],
+                    ]
+                    avg_passenger_flows = [
+                        [],
+                        [],
+                    ]  # flows for two routes over several hours of peak hours
+                    for t in range(start_time_id, end_time_id):
+                        row = rows[t]
+                        for k in range(0, len(routes)):
+                            route = routes[k]
+                            # average flow over the route
+                            avg_passenger_flow = sum(
+                                [int(row[(i, i + 1)]) for i in route[:-1]]
+                            ) / (len(route) - 1)
+                            avg_passenger_flows[k].append(avg_passenger_flow)
+                    # average flow over peak hours and routes
+                    avg_passenger_flows = [
+                        statistics.mean(avg_passenger_flows[0]),
+                        statistics.mean(avg_passenger_flows[-1]),
+                    ]
+                    if max(avg_passenger_flows) > FLOW_FACTOR * min(
+                            avg_passenger_flows
+                    ):
+                        is_flow_unbalance = True
+                        # generate short routes
+                        short_route_id = avg_passenger_flows.index(
+                            max(avg_passenger_flows)
+                        )
+                        short_route = routes[short_route_id]
+                        short_route_reverse = [
+                                                  2 * len(line.up_stations) - 1 - i for i in short_route
+                                              ][::-1]
+                        new_short_routes += [short_route, short_route_reverse]
+                        break  # breaks 'for key, rows in flow_data.items()'
+
+        # for normal line
+        if not line.is_loop_line and is_flow_unbalance:
+            # the line only has one middle station connect with depot
+            if len(line.stations_conn_depots) == 2 and not {line.up_stations[0], line.up_stations[-1]}.intersection(
+                    line.stations_conn_depots.keys()):
+                # generate short routes
+                station_list = sorted(list(line.stations_conn_depots.keys()))
+                new_short_routes = [[i for i in range(station_list[0], line.up_stations[-1] + 1)],
+                                    [i for i in range(0, station_list[0] + 1)],
+                                    [i for i in range(station_list[1], line.dn_stations[-1] + 1)],
+                                    [i for i in range(line.dn_stations[0], station_list[1] + 1)]]
+                line.routes += new_short_routes
+                for short_route in new_short_routes:
+                    route_runtime = line.get_runtime(short_route[0], short_route[-1])
+                    if short_route[0] <= line.up_stations[-1]:
+                        line.up_routes.append((short_route, route_runtime))
+                    else:
+                        line.dn_routes.append((short_route, route_runtime))
+            else:
+                # generate short routes
+                line.routes += new_short_routes
+                for short_route in new_short_routes:
+                    route_runtime = line.get_runtime(short_route[0], short_route[-1])
+                    if short_route[0] <= line.up_stations[-1]:
+                        line.up_routes.append((short_route, route_runtime))
+                    else:
+                        line.dn_routes.append((short_route, route_runtime))
+        # for loop line
+        elif line.is_loop_line and len(line.stations_conn_depots) == 4:
+            # generate short routes
+            station_list = sorted(list(line.stations_conn_depots.keys()))
+            new_short_routes = [[i for i in range(station_list[0], station_list[1] + 1)],
+                                [i for i in range(station_list[2], station_list[3] + 1)]]
+            line.routes += new_short_routes
+            for short_route in new_short_routes:
+                route_runtime = line.get_runtime(short_route[0], short_route[-1])
+                if short_route[0] <= line.up_stations[-1]:
+                    line.up_routes.append((short_route, route_runtime))
+                else:
+                    line.dn_routes.append((short_route, route_runtime))
+
+
+def read_arrival_rates(folder_path, lines, passenger_flows):
+    for filename in os.listdir(folder_path):
+        _, _, line_id = filename.split(".")[0].split("-")
+        line = lines[line_id]
+        file_path = os.path.join(folder_path, filename)
+        # read all sheets
+        all_sheets = pd.read_excel(file_path, sheet_name=None)
+        # read every sheet
+        for sheet_name, df in all_sheets.items():
+            column_num = df.shape[1]
+            # for every row
+            for index, row in df.iterrows():
+                station_id = (
+                    int(row[0])
+                    if sheet_name == "up"
+                    else 2 * len(line.up_stations) - 1 - int(row[0])
+                )
+                for j in range(1, column_num):
+                    start_t = (j - 1) * INTERVAL
+                    end_t = start_t + INTERVAL
+                    # calculate arrival rate (for each second)
+                    arrival_rate = row[j] / INTERVAL
+                    passenger_flows.d.update(
+                        {
+                            (int(line_id), station_id, t): arrival_rate
+                            for t in range(start_t, end_t)
+                        }
+                    )
+
+
+def read_alight_rates(folder_path, lines, passenger_flows):
+    for filename in os.listdir(folder_path):
+        _, _, line_id = filename.split(".")[0].split("-")
+        line = lines[line_id]
+        sectional_flows = passenger_flows.sectional_flows[line_id]
+        file_path = os.path.join(folder_path, filename)
+        # read all sheets
+        all_sheets = pd.read_excel(file_path, sheet_name=None)
+        # read every sheet
+        for sheet_name, df in all_sheets.items():
+            if "alight" not in sheet_name:
+                continue
+            column_num = df.shape[1]
+            # transect volume in this direction
+            transect_volume = (
+                sectional_flows["0"]
+                if sheet_name == "alight-up"
+                else sectional_flows["1"]
+            )
+            # for every row
+            for index, row in df.iterrows():
+                station_id = (
+                    int(row[0])
+                    if sheet_name == "alight-up"
+                    else 2 * len(line.up_stations) - 1 - int(row[0])
+                )
+                for j in range(1, column_num):
+                    start_t = (j - 1) * INTERVAL
+                    end_t = start_t + INTERVAL
+                    if station_id in [line.up_stations[0], line.dn_stations[0]]:
+                        alight_rate = 0  # the first station no one alights the train
+                    elif station_id in [line.up_stations[-1], line.dn_stations[-1]]:
+                        alight_rate = (
+                            1  # the last station all passengers alight the train
+                        )
+                    else:
+                        front_transect_volume = transect_volume[j - 1][
+                            (station_id - 1, station_id)
+                        ]
+                        alight_num = min(front_transect_volume, int(row[j]))
+                        alight_rate = alight_num / max(front_transect_volume, 0.000001)
+                    passenger_flows.theta.update(
+                        {
+                            (int(line_id), station_id, t): alight_rate
+                            for t in range(start_t, end_t)
+                        }
+                    )
+
+
+def read_transfer_rates(folder_path, lines, passenger_flows):
+    for filename in os.listdir(folder_path):
+        station_name = filename.split(".")[0]
+        file_path = os.path.join(folder_path, filename)
+        # read sheet
+        df = pd.read_excel(file_path)
+        column_num = df.shape[1]
+        for index, row in df.iterrows():
+            line_id1, dir_flag1, line_id2, dir_flag2 = row[0].split(",")
+            line1 = lines[line_id1]
+            line2 = lines[line_id2]
+            station_id1 = [
+                sta_id
+                for (sta_id, direction), value in line1.platform_names.items()
+                if direction == int(dir_flag1) and value == station_name
+            ][0]
+            station_id2 = [
+                sta_id
+                for (sta_id, direction), value in line2.platform_names.items()
+                if direction == int(dir_flag2) and value == station_name
+            ][0]
+            # for each column
+            for j in range(1, column_num):
+                start_t = (j - 1) * INTERVAL
+                end_t = start_t + INTERVAL
+                transfer_rate = float(row[j])
+                passenger_flows.phi.update(
+                    {
+                        (
+                            int(line_id1),
+                            station_id1,
+                            int(line_id2),
+                            station_id2,
+                            t,
+                        ): transfer_rate
+                        for t in range(start_t, end_t)
+                    }
+                )
+                # save transfer connections
+                temp_key = (int(line_id1), station_id1, int(line_id2), station_id2)
+                if temp_key not in line1.transfer_pairs:
+                    line1.transfer_pairs.append(temp_key)
