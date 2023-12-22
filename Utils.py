@@ -17,7 +17,7 @@ from TrainService import *
 import copy
 from CircularQueue import *
 
-USE_FIXED_VEHICLE_LINE_MODE = False
+USE_FIXED_VEHICLE_LINE_MODE = True
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -52,12 +52,12 @@ MAX_PROB = 0.9
 MIN_PROB = 0.05
 MIN_WAIT_TIME = 0.7e12
 MAX_WAIT_TIME = 1.2e12
-NEIGHBORHOOD_SIZE = 1
+NEIGHBORHOOD_SIZE = 5
 ENABLE_NEIGHBORHOOD_SEARCH = True
 ENABLE_ROUTE_WEIGHTS_SELECTION = True
 MAX_RUNTIME = 30 * 60  # in seconds
-PERTURB_THRESHOLD = 0.5  # the possibility of perturbing the headway
-ALG_METHOD = 0  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
+PERTURB_THRESHOLD = 0.6  # the possibility of perturbing the headway
+ALG_METHOD = 3  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
 ALG_CHANGE_THRESHOLD = 0
 
