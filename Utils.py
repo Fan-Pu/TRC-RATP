@@ -1264,7 +1264,7 @@ def delete_services(timetable_net, lines, depots, passenger_flows):
             depot.maximum_flow = max(depot.maximum_flow, current_flow[depot_id])
 
 
-def delete_services_fixed_mode(timetable_net, lines, depots):
+def delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows):
     depot_slot_sequence = defaultdict(list)
     for line_id, timetable in timetable_net.items():
         for service in timetable.services.values():
@@ -1279,7 +1279,27 @@ def delete_services_fixed_mode(timetable_net, lines, depots):
     depot_slot_sequence = dict(sorted(depot_slot_sequence.items()))
 
     for t, sequence in depot_slot_sequence.items():
-        random.shuffle(sequence)
+        # random.shuffle(sequence)
+        # rank services according to passenger flow density (arrive rate)
+        sequence_weights = []
+        sequence = [(depot_id, line_id, serv_id, action) for (depot_id, line_id, serv_id, action) in sequence if
+                    serv_id in timetable_net[line_id].services.keys()]
+        for depot_id, line_id, serv_id, action in sequence:
+            service = timetable_net[line_id].services[serv_id]
+            volume_density = 0
+            for i in range(0, len(service.route)):
+                station_id = service.route[i]
+                arr_t = service.arrs[i]
+                volume_density += passenger_flows.d[
+                    int(line_id), station_id, round((arr_t / 60 - START_TIME) / INTERVAL)]
+            sequence_weights.append(volume_density)
+        # Combine elements with their corresponding weights
+        combined = zip(sequence_weights, sequence)
+        # Sort based on weights
+        sorted_combined = sorted(combined)
+        # Unpack the sorted combinations to get the sorted sequence
+        sequence = [item[1] for item in sorted_combined]
+
         for depot_id, line_id, serv_id, action in sequence:
             depot = depots[str(depot_id)]
             temp_key = (depot_id, int(line_id))
@@ -1432,9 +1452,11 @@ def refresh_roulette_weights(headway_weights_dict):
 
 def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict, depots, passenger_flows,
                              last_selected_headway_indices, is_shaking):
-    # reset depot.maximum_flow
+    # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
+        depot.f_values = {key: 0 for key in depot.f_values}
+
     # generate a timetable for the network
     timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
 
@@ -1646,7 +1668,7 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
     if not USE_FIXED_VEHICLE_LINE_MODE:
         delete_services(timetable_net, lines, depots, passenger_flows)
     else:
-        delete_services_fixed_mode(timetable_net, lines, depots)
+        delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows)
 
     # simulate passenger flows and calculate service quality
     passenger_flow_simulate(timetable_net, lines, passenger_flows)
@@ -1678,9 +1700,10 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
 
 
 def local_search_change_headway(lines, depots, passenger_flows, last_selected_headway_indices, is_shaking):
-    # reset depot.maximum_flow
+    # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
+        depot.f_values = {key: 0 for key in depot.f_values}
 
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
@@ -1947,7 +1970,7 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
     if not USE_FIXED_VEHICLE_LINE_MODE:
         delete_services(timetable_net, lines, depots, passenger_flows)
     else:
-        delete_services_fixed_mode(timetable_net, lines, depots)
+        delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows)
 
     # simulate passenger flows and calculate service quality
     passenger_flow_simulate(timetable_net, lines, passenger_flows)
@@ -1982,9 +2005,10 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
 
 
 def local_search_swap_headway(lines, depots, passenger_flows, last_selected_headway_indices, is_shaking):
-    # reset depot.maximum_flow
+    # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
+        depot.f_values = {key: 0 for key in depot.f_values}
 
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
@@ -2237,7 +2261,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
     if not USE_FIXED_VEHICLE_LINE_MODE:
         delete_services(timetable_net, lines, depots, passenger_flows)
     else:
-        delete_services_fixed_mode(timetable_net, lines, depots)
+        delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows)
 
     # simulate passenger flows and calculate service quality
     passenger_flow_simulate(timetable_net, lines, passenger_flows)
