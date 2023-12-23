@@ -5,11 +5,17 @@ from Utils import *
 if __name__ == '__main__':
     lines = read_lines("./lines")
     depots = read_depots("./depots", lines)
-    passenger_flows = read_transect_flows("./passenger_flows/workday/TransectVolume-30min/", "workday", lines)
+    # passenger_flows = read_transect_flows("./passenger_flows/workday/TransectVolume-30min/", "workday", lines)
+    # set_line_short_routes(lines, passenger_flows)
+    # read_arrival_rates("./passenger_flows/workday/ArrivalVolume-30min", lines, passenger_flows)
+    # read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
+    # read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
+
+    passenger_flows = read_transect_flows("./passenger_flows/weekend/TransectVolume-30min/", "weekend", lines)
     set_line_short_routes(lines, passenger_flows)
-    read_arrival_rates("./passenger_flows/workday/ArrivalVolume-30min", lines, passenger_flows)
-    read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
-    read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
+    read_arrival_rates("./passenger_flows/weekend/ArrivalVolume-30min", lines, passenger_flows)
+    read_alight_rates("./passenger_flows/weekend/AlightVolume-30min", lines, passenger_flows)
+    read_transfer_rates("./passenger_flows/weekend/TransferRate", lines, passenger_flows)
 
     random.seed(2023)
     incumbent_solution, constant_string, solution_summary = execute_algorithm(lines, depots, passenger_flows)

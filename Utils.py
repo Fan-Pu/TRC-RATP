@@ -17,7 +17,7 @@ from TrainService import *
 import copy
 from CircularQueue import *
 
-USE_FIXED_VEHICLE_LINE_MODE = True
+USE_FIXED_VEHICLE_LINE_MODE = False
 
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
@@ -55,7 +55,7 @@ MAX_WAIT_TIME = 1.2e12
 NEIGHBORHOOD_SIZE = 5
 ENABLE_NEIGHBORHOOD_SEARCH = True
 ENABLE_ROUTE_WEIGHTS_SELECTION = True
-MAX_RUNTIME = 30 * 60  # in seconds
+MAX_RUNTIME = 2 * 60  # in seconds
 PERTURB_THRESHOLD = 0.6  # the possibility of perturbing the headway
 ALG_METHOD = 3  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
@@ -2527,7 +2527,7 @@ def read_transect_flows(folder_path, type_name, lines):
                         if direction_flag == "0"
                         else i - 1 + len(line.up_stations)
                     )
-                    row_data[(sta_id, sta_id + 1)] = int(row[i])
+                    row_data[(sta_id, sta_id + 1)] = int(float(row[i]))
                 sectional_flow.append(row_data)
 
         sectional_flows[line_id][direction_flag] = sectional_flow
