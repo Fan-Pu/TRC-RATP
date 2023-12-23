@@ -11,6 +11,12 @@ if __name__ == '__main__':
     # read_alight_rates("./passenger_flows/workday/AlightVolume-30min", lines, passenger_flows)
     # read_transfer_rates("./passenger_flows/workday/TransferRate", lines, passenger_flows)
 
+    # passenger_flows = read_transect_flows("./passenger_flows/holiday/TransectVolume-30min/", "weekend", lines)
+    # set_line_short_routes(lines, passenger_flows)
+    # read_arrival_rates("./passenger_flows/holiday/ArrivalVolume-30min", lines, passenger_flows)
+    # read_alight_rates("./passenger_flows/holiday/AlightVolume-30min", lines, passenger_flows)
+    # read_transfer_rates("./passenger_flows/holiday/TransferRate", lines, passenger_flows)
+
     passenger_flows = read_transect_flows("./passenger_flows/weekend/TransectVolume-30min/", "weekend", lines)
     set_line_short_routes(lines, passenger_flows)
     read_arrival_rates("./passenger_flows/weekend/ArrivalVolume-30min", lines, passenger_flows)
