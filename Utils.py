@@ -17,8 +17,6 @@ from TrainService import *
 import copy
 from CircularQueue import *
 
-USE_FIXED_VEHICLE_LINE_MODE = False
-
 INTERVAL = 30  # minutes
 START_TIME = 5 * 60  # minutes
 END_TIME = 24 * 60
@@ -59,10 +57,12 @@ MIN_PROB = 0.05
 MIN_WAIT_TIME = 1.4e12
 MAX_WAIT_TIME = 1.8e12
 
-NEIGHBORHOOD_SIZE = 5
+NEIGHBORHOOD_SIZE = 1
+USE_FIXED_VEHICLE_LINE_MODE = False
 ENABLE_NEIGHBORHOOD_SEARCH = True
 ENABLE_ROUTE_WEIGHTS_SELECTION = True
-MAX_RUNTIME = 2 * 60  # in seconds
+UNLIMITED_DEPOT_CAPACITY = True
+MAX_RUNTIME = 30 * 60  # in seconds
 PERTURB_THRESHOLD = 0.6  # the possibility of perturbing the headway
 ALG_METHOD = 3  # 0: headway fixing; 1: headway change; 2: headway swap; 3: hybrid
 SWAP_SIZE = 0.4  # swap 40%
@@ -1233,7 +1233,8 @@ def delete_services(timetable_net, lines, depots, passenger_flows):
                 current_flow[depot_id] += 1
             else:
                 current_flow[depot_id] -= 1
-            if current_flow[depot_id] > depot.capacity:
+            capacity = depot.capacity if not UNLIMITED_DEPOT_CAPACITY else float('inf')
+            if current_flow[depot_id] > capacity:
                 # cancel the service, retrieve the flow
                 current_flow[depot_id] -= 1
                 timetable = timetable_net[line_id]
@@ -1315,7 +1316,8 @@ def delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows):
             else:
                 current_f_dl[temp_key] -= 1
             sum_depot_flow = sum([value for key, value in current_f_dl.items() if key[0] == depot_id])
-            if sum_depot_flow > depot.capacity:
+            capacity = depot.capacity if not UNLIMITED_DEPOT_CAPACITY else float('inf')
+            if sum_depot_flow > capacity:
                 # cancel the service, retrieve the flow
                 current_f_dl[temp_key] -= 1
                 timetable = timetable_net[line_id]
