@@ -45,22 +45,24 @@ SAVE_ALL_TIMETABLES = False
 SMALL_VALUE = 0.0000001
 OBJECTIVE_SCALE = 100
 LOS_BIAS = 1.2
+# LOS_BIAS = 5
 REFRESH_THRESHOLD = 50
 MAX_PROB = 0.9
 MIN_PROB = 0.05
 
 # workday
-# MIN_WAIT_TIME = 0.7e12
-# MAX_WAIT_TIME = 1.2e12
+MIN_WAIT_TIME = 0.7e12
+MAX_WAIT_TIME = 1.2e12
 
-# holiday
-MIN_WAIT_TIME = 1.4e12
-MAX_WAIT_TIME = 1.8e12
+# holiday and weekend
+# MIN_WAIT_TIME = 1.4e12
+# MAX_WAIT_TIME = 1.8e12
 
-NEIGHBORHOOD_SIZE = 1
-USE_FIXED_VEHICLE_LINE_MODE = False
 ENABLE_NEIGHBORHOOD_SEARCH = True
 ENABLE_ROUTE_WEIGHTS_SELECTION = True
+
+NEIGHBORHOOD_SIZE = 1
+USE_FIXED_VEHICLE_LINE_MODE = True
 UNLIMITED_DEPOT_CAPACITY = True
 MAX_RUNTIME = 30 * 60  # in seconds
 PERTURB_THRESHOLD = 0.6  # the possibility of perturbing the headway
@@ -1315,9 +1317,10 @@ def delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows):
                 current_f_dl[temp_key] += 1
             else:
                 current_f_dl[temp_key] -= 1
-            sum_depot_flow = sum([value for key, value in current_f_dl.items() if key[0] == depot_id])
+            # sum_depot_flow = sum([max(0, value) for key, value in current_f_dl.items() if key[0] == depot_id])
+            sum_depot_flow = sum(depot.f_values.values())
             capacity = depot.capacity if not UNLIMITED_DEPOT_CAPACITY else float('inf')
-            if sum_depot_flow > capacity:
+            if sum_depot_flow == capacity and current_f_dl[temp_key] > depot.f_values[int(line_id)]:
                 # cancel the service, retrieve the flow
                 current_f_dl[temp_key] -= 1
                 timetable = timetable_net[line_id]
@@ -1353,6 +1356,8 @@ def delete_services_fixed_mode(timetable_net, lines, depots, passenger_flows):
                 update_info_after_delete_service(serv_id, timetable, line)
             # update the maximum flow
             depot.f_values[int(line_id)] = max(depot.f_values[int(line_id)], current_f_dl[temp_key])
+            # for line_key in depot.f_values.keys():
+            #     depot.f_values[int(line_key)] = current_f_dl[(depot_id, int(line_key))]
 
 
 def update_info_after_delete_service(serv_id, timetable, line):
@@ -1464,7 +1469,7 @@ def local_search_fix_headway(lines, fixed_headway_idx_dict, headway_weights_dict
     # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
-        depot.f_values = {key: 0 for key in depot.f_values}
+        depot.f_values = {key: 0 for key in depot.f_values.keys()}
 
     # generate a timetable for the network
     timetable_net = {l: Timetable(l) for l in lines.keys()}  # key: line_id
@@ -1712,7 +1717,7 @@ def local_search_change_headway(lines, depots, passenger_flows, last_selected_he
     # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
-        depot.f_values = {key: 0 for key in depot.f_values}
+        depot.f_values = {key: 0 for key in depot.f_values.keys()}
 
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
@@ -2017,7 +2022,7 @@ def local_search_swap_headway(lines, depots, passenger_flows, last_selected_head
     # reset depot.maximum_flow and depot.f_values
     for depot in depots.values():
         depot.maximum_flow = 0
-        depot.f_values = {key: 0 for key in depot.f_values}
+        depot.f_values = {key: 0 for key in depot.f_values.keys()}
 
     last_selected_headway_indices_copy = last_selected_headway_indices.copy()
     # generate a timetable for the network
